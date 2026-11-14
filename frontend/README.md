@@ -42,3 +42,5 @@ kill <PID>
 ```
 
 On Windows, the worker starts without a visible console. Automatic child-process cleanup is Linux-specific; keep the terminal open until the run ends.
+
+The demo now selects literature sources and the general medical template. Outputs include Word drafts, evidence-review tables and a search coverage report. Configure the model policy, estimated spending limit and local Docker TeX image as described in [RELIABILITY.md](../RELIABILITY.md). Saved-run resume is available through the CLI.

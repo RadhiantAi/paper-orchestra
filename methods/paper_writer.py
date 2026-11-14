@@ -37,12 +37,24 @@ def write_single_paper(
     latex_template_dir,
     idea_filename="idea_dense.md",
     experimental_log_filename="experimental_log.md",
-    writer_model_name: str = None,
-    reflection_model_name: str = None,
-    research_cutoff: str = "2024-11",
-    search_model_name: str = None,
+    writer_model_name=None,
+    reflection_model_name=None,
+    research_cutoff=None,
+    search_model_name=None,
     discovery_engine=None,
+    resume_run=None,
+    run_policy=None,
+    raw_materials_dir=None,
 ):
+    from pathlib import Path
+    from datetime import datetime
+    import uuid
+    from utils.provider_backend import resolve_model, call_llm_with_contents
+    from utils.run_control import RunWorkspace, write_json
+    from utils.model_policy import RunPolicy, use_policy
+    from utils.safe_compile import check_compiler
+    from utils.research_exports import evidence_ledger, export_word
+
     writer_model_name = writer_model_name or os.getenv("PAPER_WRITER_MODEL")
     reflection_model_name = (
         reflection_model_name or os.getenv("PAPER_REVIEW_MODEL") or writer_model_name
@@ -50,170 +62,216 @@ def write_single_paper(
     search_model_name = (
         search_model_name or os.getenv("PAPER_SEARCH_MODEL") or writer_model_name
     )
-    for selected_model in (writer_model_name, reflection_model_name, search_model_name):
-        validate_model_configuration(selected_model)
+    models = [
+        ":".join(resolve_model(m))
+        for m in (writer_model_name, reflection_model_name, search_model_name)
+    ]
+    writer_model_name, reflection_model_name, search_model_name = models
+    for model in models:
+        validate_model_configuration(model)
+    policy = run_policy or RunPolicy.from_env()
+    has_figures = any(
+        p.suffix.lower() in {".png", ".jpg", ".jpeg", ".pdf"}
+        for p in (
+            Path(raw_materials_dir)
+            if raw_materials_dir
+            else Path(base_dir, "raw_materials")
+        )
+        .joinpath("figures")
+        .glob("*")
+    )
+    policy.check_role(writer_model_name, images=has_figures)
+    policy.check_role(reflection_model_name, images=True)
+    policy.check_role(search_model_name)
     discovery_engine = discovery_engine or DiscoveryEngine()
-    latex_writeup_dir = osp.join(base_dir, "latex_writeup")
-    pdf_file = osp.join(base_dir, "final_paper.pdf")
+    research_cutoff = research_cutoff or datetime.now().strftime("%Y-%m")
+    settings = {
+        "models": models,
+        "cutoff": research_cutoff,
+        "idea_file": idea_filename,
+        "log_file": experimental_log_filename,
+        "discovery": vars(discovery_engine.config),
+        "profiles": policy.profiles,
+        "probe": policy.probe,
+        "max_output_tokens": os.getenv("PAPER_MAX_OUTPUT_TOKENS", "16384"),
+    }
+    # Spending/call caps can be raised on explicit resume; completed inputs cannot change.
+    run = RunWorkspace(
+        base_dir, latex_template_dir, settings, resume_run, raw_materials_dir
+    )
+    folder = run.path
+    materials = folder / "raw_materials"
+    template = folder / "template_inputs"
+    idea, log = materials / idea_filename, materials / experimental_log_filename
+    if not idea.is_file() or not log.is_file():
+        raise ValueError("The configured idea and experimental log files are required.")
+    print(f"Run outputs: {folder}")
 
-    if osp.exists(latex_writeup_dir):
-        shutil.rmtree(latex_writeup_dir)
-    if osp.exists(pdf_file):
-        os.remove(pdf_file)
+    def preflight():
+        check_compiler()
+        import pypandoc
 
-    materials_dir = osp.join(base_dir, "raw_materials")
+        pypandoc.get_pandoc_path()
+        checked = []
+        for model in dict.fromkeys(models):
+            images = model == reflection_model_name or (
+                has_figures and model == writer_model_name
+            )
+            if policy.probe:
+                contents = ['Return JSON {"ok": true}.']
+                if images:
+                    import io
+                    from PIL import Image
 
-    old_figure_dir = osp.join(materials_dir, "figures")
-    new_figure_dir = osp.join(latex_writeup_dir, "figures")
-    if osp.exists(old_figure_dir):
-        shutil.copytree(old_figure_dir, new_figure_dir, dirs_exist_ok=True)
-    figures_dir = new_figure_dir
+                    buffer = io.BytesIO()
+                    Image.new("RGB", (32, 32), "red").save(buffer, format="PNG")
+                    contents = [
+                        "Return JSON with ok true and colour equal to the dominant colour of the attached image.",
+                        {"data": buffer.getvalue(), "mime_type": "image/png"},
+                    ]
+                answer = call_llm_with_contents(
+                    contents,
+                    model_name=model,
+                    generation_configs={"max_output_tokens": 128},
+                )
+                if answer["parsed_response"].get("ok") is not True:
+                    raise RuntimeError(
+                        "Model capability probe did not return the expected JSON."
+                    )
+                if (
+                    images
+                    and str(answer["parsed_response"].get("colour", "")).lower()
+                    != "red"
+                ):
+                    raise RuntimeError(
+                        "Model did not identify the image in the capability probe."
+                    )
+            checked.append(
+                {
+                    "model": model,
+                    "images_required": images,
+                    "validation": "live_probe" if policy.probe else "declared_only",
+                }
+            )
+        write_json(
+            folder / "preflight.json",
+            {"models": checked, "compiler": "local_container_image_available"},
+        )
 
-    max_n_tries = 3
-    cur_try = 0
-    succeed = False
+    def outline():
+        OutlineAgent(model_name=writer_model_name, cutoff_date=research_cutoff).run(
+            idea_file=str(idea),
+            experimental_log_file=str(log),
+            latex_template_file=str(template / "template.tex"),
+            conference_guidelines_file=str(template / "guidelines.md"),
+            output_filepath=str(folder / "outline.json"),
+        )
 
-    while (not succeed) and (cur_try < max_n_tries):
-        try:
-            assert osp.exists(materials_dir), (
-                f"Please make sure '{materials_dir}' exists!"
-            )
+    literature = folder / "literature_agent_output"
 
-            shutil.copytree(latex_template_dir, latex_writeup_dir, dirs_exist_ok=True)
+    def discover():
+        HybridLiteratureAgent(
+            str(idea),
+            str(log),
+            str(template / "template.tex"),
+            str(template / "guidelines.md"),
+            str(literature),
+            model_name=writer_model_name,
+            search_model_name=search_model_name,
+            discovery_engine=discovery_engine,
+        ).run(str(folder / "outline.json"), research_cutoff)
 
-            guidelines_path = osp.join(latex_writeup_dir, "guidelines.md")
-            latex_template_path = osp.join(latex_writeup_dir, "template.tex")
+    latex = folder / "latex_writeup"
 
-            idea_file_path = osp.join(materials_dir, idea_filename)
-            experimental_log_file_path = osp.join(
-                materials_dir, experimental_log_filename
-            )
-
-            assert osp.exists(guidelines_path), (
-                f"No guidelines file detected at '{guidelines_path}'!"
-            )
-            assert osp.exists(latex_template_path), (
-                f"No template file detected at '{latex_template_path}'!"
-            )
-            assert osp.exists(idea_file_path), (
-                f"No idea file detected at '{idea_file_path}'!"
-            )
-            assert osp.exists(experimental_log_file_path), (
-                f"No experimental log file detected at '{experimental_log_file_path}'!"
-            )
-
-            ###############################################################################################
-            # Step 1: Call outline agent
-            outline_agent = OutlineAgent(
-                model_name=writer_model_name, cutoff_date=research_cutoff
-            )
-            outline_file_path = osp.join(base_dir, "outline.json")
-            outline_agent.run(
-                idea_file=idea_file_path,
-                experimental_log_file=experimental_log_file_path,
-                latex_template_file=latex_template_path,
-                conference_guidelines_file=guidelines_path,
-                output_filepath=outline_file_path,
-            )
-
-            ###############################################################################################
-            # Step 2: Call HybridLiteratureAgent
-            literature_agent_output_dir = osp.join(base_dir, "literature_agent_output")
-            literature_agent = HybridLiteratureAgent(
-                idea_path=idea_file_path,
-                experimental_log_path=experimental_log_file_path,
-                latex_template_path=latex_template_path,
-                conference_guidelines_path=guidelines_path,
-                output_dir=literature_agent_output_dir,
-                model_name=writer_model_name,
-                max_workers=3,
-                search_model_name=search_model_name,
-                discovery_engine=discovery_engine,
-            )
-            literature_agent.run(
-                outline_path=outline_file_path,
-                cutoff_date=research_cutoff,
-            )
-            shutil.copy(
-                osp.join(literature_agent_output_dir, "outline_v1.json"),
-                outline_file_path,
-            )
-            shutil.copy(
-                osp.join(literature_agent_output_dir, "updated_template.tex"),
-                osp.join(latex_writeup_dir, "template.tex"),
-            )
-            shutil.copy(
-                osp.join(literature_agent_output_dir, "references.bib"),
-                osp.join(latex_writeup_dir, "references.bib"),
-            )
-
-            ###############################################################################################
-            # Step 3. Call SectionWritingAgent
-            citation_map_path = osp.join(
-                literature_agent_output_dir, "citation_map.json"
-            )
-            section_writing_agent = SectionWritingAgent(
-                outline_path=outline_file_path,
-                template_path=osp.join(latex_writeup_dir, "template.tex"),
-                idea_path=idea_file_path,
-                experimental_log_path=experimental_log_file_path,
-                citation_map_path=citation_map_path,
-                figures_info_path=osp.join(figures_dir, "info.json"),
-                guidelines_path=guidelines_path,
-                model_name=writer_model_name,
-            )
-            raw_draft_tex_path = osp.join(latex_writeup_dir, "raw_draft_paper.tex")
-            section_writing_agent.run(output_path=raw_draft_tex_path)
-
-            ###############################################################################################
-            # Step 4: Content Reflection
-            content_refinement_workdir = os.path.join(
-                base_dir, "content_refinement_workdir"
-            )
-            if os.path.exists(content_refinement_workdir):
-                shutil.rmtree(content_refinement_workdir)
-            os.makedirs(content_refinement_workdir, exist_ok=True)
-
+    def draft():
+        shutil.copytree(template, latex, dirs_exist_ok=True)
+        if (materials / "figures").exists():
             shutil.copytree(
-                latex_writeup_dir,
-                content_refinement_workdir,
-                dirs_exist_ok=True,
+                materials / "figures", latex / "figures", dirs_exist_ok=True
             )
+        shutil.copy2(literature / "updated_template.tex", latex / "template.tex")
+        shutil.copy2(literature / "references.bib", latex / "references.bib")
+        SectionWritingAgent(
+            outline_path=str(literature / "outline_v1.json"),
+            template_path=str(latex / "template.tex"),
+            idea_path=str(idea),
+            experimental_log_path=str(log),
+            citation_map_path=str(literature / "citation_map.json"),
+            figures_info_path=str(latex / "figures" / "info.json"),
+            guidelines_path=str(template / "guidelines.md"),
+            model_name=writer_model_name,
+        ).run(output_path=str(latex / "raw_draft_paper.tex"))
 
-            content_refinement_agent = ContentRefinementAgent(
-                experimental_log_path=experimental_log_file_path,
-                citation_map_path=citation_map_path,
-                guidelines_path=guidelines_path,
-                model_name=reflection_model_name,
-                max_reflections=3,
-                work_dir=content_refinement_workdir,
-            )
-            content_refinment_agent_output_pdf_path = content_refinement_agent.run(
-                texfile_path=raw_draft_tex_path
-            )
-            assert osp.exists(content_refinment_agent_output_pdf_path), (
-                f"Content Refinement Agent failed to produce final PDF at {content_refinment_agent_output_pdf_path}!"
-            )
+    def review():
+        attempt = folder / "review_attempts" / uuid.uuid4().hex[:8]
+        shutil.copytree(latex, attempt)
+        result = ContentRefinementAgent(
+            str(log),
+            str(literature / "citation_map.json"),
+            str(template / "guidelines.md"),
+            model_name=reflection_model_name,
+            work_dir=str(attempt),
+        ).run(str(latex / "raw_draft_paper.tex"))
+        if not Path(result).is_file():
+            raise RuntimeError("Review did not produce a valid PDF.")
+        shutil.copytree(attempt, folder / "reviewed", dirs_exist_ok=True)
+        shutil.copy2(
+            attempt / "final_refined_paper.tex", folder / "reviewed" / "main.tex"
+        )
+        shutil.copy2(result, folder / "final_paper.pdf")
 
-            final_pdf_path = osp.join(base_dir, "final_paper.pdf")
-            print(
-                f" >> Copying final PDF from  {content_refinment_agent_output_pdf_path} to {final_pdf_path}...\n"
-            )
-            shutil.copy(content_refinment_agent_output_pdf_path, final_pdf_path)
-            print(" >> Final PDF saved to:\n", final_pdf_path)
+    def exports():
+        evidence_ledger(
+            folder / "reviewed" / "main.tex", literature / "citation_map.json", folder
+        )
+        export_word(
+            folder / "reviewed" / "main.tex",
+            folder / "manuscript.docx",
+            literature / "references.bib",
+        )
 
-            succeed = True
+    with run.lock(), use_policy(policy):
+        policy.attach(folder)
+        try:
+            run.stage("preflight", preflight, ["preflight.json"])
+            run.stage("outline", outline, ["outline.json"])
+            run.stage("literature", discover, ["literature_agent_output"])
+            run.stage("draft", draft, ["latex_writeup"])
+            run.stage("review", review, ["reviewed", "final_paper.pdf"])
+            run.stage(
+                "exports",
+                exports,
+                [
+                    "evidence_review.json",
+                    "evidence_review.csv",
+                    "manuscript.docx",
+                    "word_export_report.json",
+                ],
+            )
+            run.manifest.update(status="complete")
+            run.save()
             return True
+        except Exception as error:
+            from utils.model_policy import ModelPolicyError
+            from utils.safe_compile import CompilationError
 
-        except Exception:
-            print(f"[Try {cur_try + 1}/{max_n_tries}] EXCEPTION in perform_writeup:")
-            print(traceback.format_exc())
-            cur_try += 1
-            if cur_try < max_n_tries:
-                print("Try again now...")
-
-    print(f"Writeup failed after {max_n_tries}! Stop here.")
-    return False
+            reason = (
+                str(error)
+                if isinstance(error, (ModelPolicyError, CompilationError))
+                else "Inspect the stage reports; source exception text is not copied here."
+            )
+            run.manifest.update(
+                status="failed", error_type=type(error).__name__, error=reason
+            )
+            run.save()
+            print(
+                f"Run stopped at {run.manifest.get('current_stage')}. Outputs preserved at {folder}."
+            )
+            # Provider errors are already sanitised. Do not echo arbitrary source exception messages.
+            print(
+                f"Failure type: {type(error).__name__}. Inspect the stage reports and resume this run."
+            )
+            return False
 
 
 def process_paper_task(
@@ -243,40 +301,22 @@ def process_paper_task(
             "paper_path": "",
         }
 
-        if True:
-            shutil.rmtree(paper_dest_dir, ignore_errors=True)
-            os.makedirs(paper_dest_dir, exist_ok=True)
+        success = write_single_paper(
+            base_dir=paper_dest_dir,
+            latex_template_dir=latex_template_dir,
+            idea_filename=idea_filename,
+            experimental_log_filename=experimental_log_filename,
+            writer_model_name=writer_model_name,
+            research_cutoff=research_cutoff,
+            raw_materials_dir=paper["content_folder"],
+        )
+        if success:
+            from utils.run_control import artifact_root
 
-            content_dest_dir = osp.join(paper_dest_dir, "raw_materials")
-            os.makedirs(content_dest_dir, exist_ok=True)
-            print(
-                f"Copying content_folder from {paper['content_folder']} to {content_dest_dir}..."
+            result["status"] = "success"
+            result["paper_path"] = str(
+                artifact_root(paper_dest_dir) / "final_paper.pdf"
             )
-            shutil.copytree(
-                src=paper["content_folder"], dst=content_dest_dir, dirs_exist_ok=True
-            )
-            print(f"Copying original paper to {content_dest_dir}...")
-            shutil.copy(
-                src=paper["pdf_path"],
-                dst=osp.join(content_dest_dir, "original_paper.pdf"),
-            )
-
-            success = write_single_paper(
-                base_dir=paper_dest_dir,
-                latex_template_dir=latex_template_dir,
-                idea_filename=idea_filename,
-                experimental_log_filename=experimental_log_filename,
-                writer_model_name=writer_model_name,
-                research_cutoff=research_cutoff,
-            )
-
-            if success:
-                result["status"] = "success"
-                result["paper_path"] = final_paper_path
-                print(f"Paper {paper_id} successfully written!")
-            else:
-                print(f"Paper {paper_id} writing failed.")
-                return result
 
         return result
 

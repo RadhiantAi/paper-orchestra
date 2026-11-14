@@ -9,6 +9,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from utils.response_parsing import parse_json_results
+from utils.model_policy import active_policy
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -109,13 +110,13 @@ def _client(provider):
                 api_key=os.getenv("LLM_API_KEY") or "local-no-key",
                 base_url=os.environ["LLM_BASE_URL"],
                 timeout=timeout,
-                max_retries=2,
+                max_retries=0,
             )
         return OpenAI(
             api_key=os.environ["OPENAI_API_KEY"],
             base_url="https://api.openai.com/v1",
             timeout=timeout,
-            max_retries=2,
+            max_retries=0,
         )
     if provider == "anthropic":
         from anthropic import Anthropic
@@ -124,12 +125,17 @@ def _client(provider):
             api_key=os.environ["ANTHROPIC_API_KEY"],
             base_url="https://api.anthropic.com",
             timeout=timeout,
-            max_retries=2,
+            max_retries=0,
         )
     from google import genai
     from google.genai import types
 
-    options = {"http_options": types.HttpOptions(timeout=int(timeout * 1000))}
+    options = {
+        "http_options": types.HttpOptions(
+            timeout=int(timeout * 1000),
+            retry_options=types.HttpRetryOptions(attempts=1),
+        )
+    }
     if os.getenv("VERTEX_AI_PROJECT") and os.getenv("VERTEX_AI_LOCATION"):
         return genai.Client(
             vertexai=True,
@@ -208,7 +214,9 @@ def _request_with_client(
             raise ModelResponseError(
                 "Model response was truncated, refused or requested an unsupported tool."
             )
-        return choice.message.content
+        return choice.message.content, _usage(
+            getattr(response, "usage", None), "prompt_tokens", "completion_tokens"
+        )
     if provider == "anthropic":
         content = []
         for part in parts:
@@ -238,9 +246,17 @@ def _request_with_client(
             raise ModelResponseError(
                 "Model response was incomplete or requested an unsupported tool."
             )
+        usage = _usage(
+            getattr(response, "usage", None), "input_tokens", "output_tokens"
+        )
+        if usage:
+            for key in ("cache_read_input_tokens", "cache_creation_input_tokens"):
+                extra = getattr(response.usage, key, 0)
+                if type(extra) is int:
+                    usage["input_tokens"] += extra
         return "\n".join(
             block.text for block in response.content if block.type == "text"
-        )
+        ), usage
     from google.genai import types
 
     content = [
@@ -262,7 +278,26 @@ def _request_with_client(
         or str(response.candidates[0].finish_reason).split(".")[-1] != "STOP"
     ):
         raise ModelResponseError("Model response was incomplete or blocked.")
-    return response.text
+    usage = _usage(
+        getattr(response, "usage_metadata", None),
+        "prompt_token_count",
+        "candidates_token_count",
+    )
+    if usage:
+        thoughts = getattr(response.usage_metadata, "thoughts_token_count", 0)
+        if type(thoughts) is int:
+            usage["output_tokens"] += thoughts
+    return response.text, usage
+
+
+def _usage(value, input_key, output_key):
+    incoming, outgoing = (
+        getattr(value, input_key, None),
+        getattr(value, output_key, None),
+    )
+    if type(incoming) is int and type(outgoing) is int:
+        return {"input_tokens": incoming, "output_tokens": outgoing}
+    return None
 
 
 def call_llm_with_contents(
@@ -288,14 +323,29 @@ def call_llm_with_contents(
     if max_tokens <= 0:
         raise ModelConfigurationError("PAPER_MAX_OUTPUT_TOKENS must be positive.")
     parts = _parts(contents)
+    policy = active_policy()
+    reservation = (
+        policy.reserve(f"{provider}:{model}", parts, system, max_tokens)
+        if policy
+        else None
+    )
     try:
         raw = _request(provider, model, parts, system, temperature, max_tokens)
     except ModelResponseError:
+        if policy:
+            policy.finish(reservation, status="failed_unknown_usage")
         raise
     except Exception:
+        if policy:
+            policy.finish(reservation, status="failed_unknown_usage")
         raise ModelResponseError(
             f"{provider} request failed. Check model access, credentials and API limits."
         ) from None
+    usage = None
+    if isinstance(raw, tuple):
+        raw, usage = raw
+    if policy:
+        policy.finish(reservation, usage)
     if not isinstance(raw, str) or not raw.strip():
         raise ModelResponseError("Model returned no text.")
     parser = result_parsing_func or (parse_json_results if return_json else lambda x: x)
@@ -307,7 +357,7 @@ def call_llm_with_contents(
         raise ModelResponseError(
             "Model response did not contain the required structured output."
         )
-    return {"raw_response": raw, "parsed_response": parsed}
+    return {"raw_response": raw, "parsed_response": parsed, "usage": usage}
 
 
 def get_llm_parser(model_name=None, return_json=True):

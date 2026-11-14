@@ -7,7 +7,7 @@
 
 This fork supports OpenAI, Anthropic, Gemini and OpenAI-compatible endpoints. Writing, review and literature ranking can use different models. It removes generated-code execution and automatic email delivery. Outputs require human review.
 
-Read [FORK_NOTES.md](FORK_NOTES.md) for configuration, search changes, safeguards and verification limits. The upstream authors listed above created PaperOrchestra; this fork is independently modified.
+Read [RELIABILITY.md](RELIABILITY.md) for setup, saved runs, spending limits and verification; [DISCOVERY.md](DISCOVERY.md) covers literature sources. [FORK_NOTES.md](FORK_NOTES.md) summarises the fork. The upstream authors listed above created PaperOrchestra; this fork is independently modified.
 
 
 PaperOrchestra is a multi-agent framework for automated AI research paper writing. It transforms pre-writing materials (ideas, experimental logs and supplied figures) into draft LaTeX manuscripts, including literature synthesis.
@@ -27,16 +27,9 @@ Its agents handle outline generation, literature review, section writing and con
 
 ## Installation
 
-1.  **Environment Setup**: The project relies on a Conda environment named `paper_orchestra`. You can set up a similar environment with Python 3.11 and install the required dependencies.
-    ```bash
-    conda create -n paper_orchestra python=3.11
-    conda activate paper_orchestra
-    pip install -r requirements.txt
-    ```
-
-2. **Model configuration**: Copy `.env.example` to `.env`, choose a writer model and supply only the credentials for the providers you select. Review and literature-ranking models can be set separately. Model names use `openai:MODEL_ID`, `anthropic:MODEL_ID`, `gemini:MODEL_ID` or `compatible:MODEL_ID`. Do not commit `.env`.
-
-3. **LaTeX**: Install a TeX distribution that provides `pdflatex` and `bibtex`, and ensure both commands are on PATH. Installing the Python requirements alone does not install these tools.
+1. **Environment**: Use Python 3.14 in a virtual environment and install `requirements-lock.txt`. It pins the versions used for validation.
+2. **Models**: Copy `.env.example` to `.env` and `model-policy.example.json` to `model-policy.json`. Set selected model credentials, capabilities, token limits, current prices and an authorised spending ceiling. See [RELIABILITY.md](RELIABILITY.md).
+3. **Compilation**: Run Docker and build the local TeX image with `docker build -f docker/tex.Dockerfile -t paper-orchestra-tex:local .`. The application compiles in an isolated container; it does not compile generated TeX directly on the host.
 
 ## Dataset
 
@@ -68,7 +61,12 @@ python paper_writing_cli.py \
 *   `--use_plotting`: Retained for compatibility. `true` is rejected; supply checked figures instead.
 *   `--writer_model_name`: LLM for writer and literature agents.
 *   `--reflection_model_name`: Model for review and refinement; defaults to the writer.
-*   `--search_model_name`: Model for ranking retrieved Semantic Scholar records; defaults to the writer.
+*   `--search_model_name`: Model for ranking retrieved records; defaults to the writer.
+
+* `--literature_sources`: Comma-separated source names. Defaults to PubMed, OpenAlex, Semantic Scholar and Crossref.
+* `--resume_run`: Resume a saved run after checking unchanged inputs and completed output hashes.
+
+Outputs are saved under `output_dir/runs/<run-id>`. The general medical template is `templates/medical`; outputs include an editable Word draft and an evidence-review table.
 
 ### Interactive Demo
 

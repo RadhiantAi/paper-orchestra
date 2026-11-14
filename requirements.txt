@@ -16,3 +16,5 @@ tqdm
 anthropic
 requests
 joblib
+python-docx
+pypandoc-binary

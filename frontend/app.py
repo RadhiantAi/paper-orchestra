@@ -37,6 +37,7 @@ from methods.paper_writer import write_single_paper
 from utils.pdf_utils import pdf_to_grid_images
 from utils.llm_backend_utils import validate_model_configuration, ModelConfigurationError
 from utils.literature_discovery import DEFAULT_SOURCES
+from utils.run_control import artifact_root
 
 st.set_page_config(
     page_title="Paper Orchestra - AI Paper Writer",
@@ -103,6 +104,11 @@ def initialize_session_state():
 initialize_session_state()
 
 
+def current_artifact_dir():
+    base = st.session_state.get("run_directory")
+    return str(artifact_root(base)) if base else ""
+
+
 def render_sidebar():
     st.sidebar.title("🎻 Configuration")
 
@@ -158,7 +164,7 @@ def render_sidebar():
     )
     st.sidebar.caption("Collection searches only the export configured in LITERATURE_COLLECTION_PATH. Coverage and failures are saved with each run.")
 
-    templates = ["cvpr2025", "iclr2025"]
+    templates = ["medical", "cvpr2025", "iclr2025"]
     selected_template = st.sidebar.selectbox(
         "Select Template", templates, disabled=st.session_state.locked
     )
@@ -221,7 +227,7 @@ def render_gallery_tab():
     st.subheader("Generated Figures")
     if st.session_state.get("run_directory"):
         results_path = os.path.join(
-            st.session_state.run_directory, "plotting_results.json"
+            current_artifact_dir(), "plotting_results.json"
         )
         if os.path.exists(results_path):
             try:
@@ -233,7 +239,7 @@ def render_gallery_tab():
     if st.session_state.get("generated_figures"):
         for figure in st.session_state.generated_figures:
             image_path = os.path.join(
-                st.session_state.run_directory, figure.get("image_path", "")
+                current_artifact_dir(), figure.get("image_path", "")
             )
             if os.path.exists(image_path):
                 st.markdown(f"**{figure.get('title', 'Figure')}**")
@@ -244,7 +250,7 @@ def render_gallery_tab():
 def render_json_file(file_name, title, failure_message):
     st.subheader(title)
     if st.session_state.get("run_directory"):
-        file_path = os.path.join(st.session_state.run_directory, file_name)
+        file_path = os.path.join(current_artifact_dir(), file_name)
         if os.path.exists(file_path):
             try:
                 with open(file_path, "r") as file_object:
@@ -701,7 +707,7 @@ else:
     # 1. Timeline Tab
     with tab_timeline:
         st.subheader("Writing Progress")
-        report_path = os.path.join(st.session_state.get("run_directory") or "", "literature_agent_output", "discovery_report.json")
+        report_path = os.path.join(current_artifact_dir(), "literature_agent_output", "discovery_report.json")
         if os.path.isfile(report_path):
             with open(report_path, encoding="utf-8") as report_file:
                 coverage_report = json.load(report_file)
@@ -763,9 +769,17 @@ else:
                         st.text("No logs yet.")
 
         if not st.session_state.running and st.session_state.get("run_directory"):
-            pdf_path = os.path.join(st.session_state.run_directory, "final_paper.pdf")
+            for filename, label, mime in (
+                ("manuscript.docx", "Download editable Word draft", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+                ("evidence_review.csv", "Download evidence review table", "text/csv"),
+            ):
+                candidate = os.path.join(current_artifact_dir(), filename)
+                if os.path.isfile(candidate):
+                    with open(candidate, "rb") as stream:
+                        st.download_button(label, stream.read(), file_name=filename, mime=mime)
+            pdf_path = os.path.join(current_artifact_dir(), "final_paper.pdf")
             latex_directory = os.path.join(
-                st.session_state.run_directory, "latex_writeup"
+                current_artifact_dir(), "reviewed"
             )
 
             if os.path.exists(pdf_path) or os.path.exists(latex_directory):
@@ -850,8 +864,8 @@ else:
             st.info("No refinement progress available yet.")
         else:
             worklog_path = os.path.join(
-                st.session_state.run_directory,
-                "content_refinement_workdir",
+                current_artifact_dir(),
+                "reviewed",
                 "content_refinement_worklog.json",
             )
 
@@ -859,8 +873,8 @@ else:
             columns = st.columns(2)
 
             initial_pdf_path = os.path.join(
-                st.session_state.run_directory,
-                "content_refinement_workdir",
+                current_artifact_dir(),
+                "reviewed",
                 "initial_draft.pdf",
             )
             if os.path.exists(initial_pdf_path):
@@ -870,8 +884,8 @@ else:
                         render_pdf_and_snapshots(
                             initial_pdf_path,
                             os.path.join(
-                                st.session_state.run_directory,
-                                "content_refinement_workdir",
+                                current_artifact_dir(),
+                                "reviewed",
                                 "pdf_screenshots",
                                 "content_refinement",
                                 "v0",
@@ -910,13 +924,13 @@ else:
 
                                 render_pdf_and_snapshots(
                                     os.path.join(
-                                        st.session_state.run_directory,
-                                        "content_refinement_workdir",
+                                        current_artifact_dir(),
+                                        "reviewed",
                                         f"refined_paper_{version_key}.pdf",
                                     ),
                                     os.path.join(
-                                        st.session_state.run_directory,
-                                        "content_refinement_workdir",
+                                        current_artifact_dir(),
+                                        "reviewed",
                                         "pdf_screenshots",
                                         "content_refinement",
                                         version_key,
@@ -938,8 +952,8 @@ else:
                     )
 
                     format_worklog_path = os.path.join(
-                        st.session_state.run_directory,
-                        "content_refinement_workdir",
+                        current_artifact_dir(),
+                        "reviewed",
                         "format_refinement_worklog.json",
                     )
                     if os.path.exists(format_worklog_path):
@@ -959,13 +973,13 @@ else:
                                             "formatting_feedback", {}
                                         ),
                                         "pdf_path": os.path.join(
-                                            st.session_state.run_directory,
-                                            "content_refinement_workdir",
+                                            current_artifact_dir(),
+                                            "reviewed",
                                             f"formatted_candidate_{version_key}.pdf",
                                         ),
                                         "screenshots_directory": os.path.join(
-                                            st.session_state.run_directory,
-                                            "content_refinement_workdir",
+                                            current_artifact_dir(),
+                                            "reviewed",
                                             "pdf_screenshots",
                                             "format_refinement",
                                             version_key,
@@ -984,8 +998,8 @@ else:
                                     else f"refined_paper_v{final_selected_version[1:]}.pdf"
                                 )
                                 pdf_path = os.path.join(
-                                    st.session_state.run_directory,
-                                    "content_refinement_workdir",
+                                    current_artifact_dir(),
+                                    "reviewed",
                                     source_pdf_name,
                                 )
 
@@ -1015,8 +1029,8 @@ else:
 
                         if os.path.exists(
                             os.path.join(
-                                st.session_state.run_directory,
-                                "content_refinement_workdir",
+                                current_artifact_dir(),
+                                "reviewed",
                                 "final_refined_paper.pdf",
                             )
                         ):

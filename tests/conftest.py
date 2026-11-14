@@ -28,6 +28,11 @@ def offline_environment(monkeypatch, request):
         "PAPER_REVIEW_MODEL",
         "PAPER_SEARCH_MODEL",
         "PAPER_MAX_OUTPUT_TOKENS",
+        "PAPER_MODEL_POLICY",
+        "PAPER_MAX_COST_USD",
+        "PAPER_MAX_MODEL_CALLS",
+        "PAPER_PROBE_MODE",
+        "PAPER_TEX_IMAGE",
         "SMTP_EMAIL",
         "SMTP_PASSWORD",
     ):

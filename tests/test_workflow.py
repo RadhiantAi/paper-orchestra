@@ -10,6 +10,8 @@ from methods import paper_writer
 from methods.agents import literature_review_agent as literature
 from utils import pdf_utils, provider_backend
 from utils.draft_output import DRAFT_LABEL
+from utils.model_policy import RunPolicy
+from utils.run_control import artifact_root
 from utils.literature_sources import LiteratureRecord, SearchPage
 from utils.literature_discovery import DiscoveryConfig, DiscoveryEngine
 
@@ -89,17 +91,42 @@ def test_synthetic_workflow_with_mixed_providers(tmp_path, monkeypatch):
 
     monkeypatch.setattr(paper_writer.ContentRefinementAgent, "__init__", one_reflection)
 
-    def synthetic_tex(command, cwd, **kwargs):
-        if command[0] == "pdflatex":
-            path = Path(cwd) / Path(command[-1]).with_suffix(".pdf")
+    original_run = pdf_utils.subprocess.run
+
+    def synthetic_tex(command, **kwargs):
+        if command[0] != "docker":
+            return original_run(command, **kwargs)
+        if (
+            "--entrypoint" in command
+            and command[command.index("--entrypoint") + 1] == "pdflatex"
+        ):
+            mount = command[command.index("--mount") + 1]
+            folder = Path(mount.split("source=", 1)[1].rsplit(",target=", 1)[0])
+            path = folder / Path(command[-1]).with_suffix(".pdf")
+            path.unlink(missing_ok=True)
             with pymupdf.open() as document:
                 document.new_page().insert_text(
                     (50, 50), "Synthetic result: 4 of 10.\n" * 6
                 )
                 document.save(path)
+            path.with_suffix(".log").write_text("Compilation fixture succeeded.")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(pdf_utils.subprocess, "run", synthetic_tex)
+    profiles = {
+        name: dict(
+            text=True,
+            json=True,
+            images=True,
+            max_image_tokens=8192,
+            max_input_tokens=200000,
+            max_output_tokens=16384,
+            input_usd_per_million=0,
+            output_usd_per_million=0,
+        )
+        for name in ("openai:writer", "anthropic:reviewer", "compatible:ranker")
+    }
+    policy = RunPolicy(profiles, probe=False)
     assert (
         paper_writer.write_single_paper(
             str(tmp_path),
@@ -110,6 +137,7 @@ def test_synthetic_workflow_with_mixed_providers(tmp_path, monkeypatch):
             search_model_name="compatible:ranker",
             research_cutoff="2026-01",
             discovery_engine=discovery,
+            run_policy=policy,
         )
         is True
     )
@@ -123,23 +151,38 @@ def test_synthetic_workflow_with_mixed_providers(tmp_path, monkeypatch):
     assert all(p == "anthropic" and m == "reviewer" for p, m, _ in requests[4:])
     assert any("data" in part for part in requests[3][2])
     assert any("data" in part for part in requests[8][2])
-    with pymupdf.open(tmp_path / "final_paper.pdf") as document:
+    result_dir = artifact_root(tmp_path)
+    with pymupdf.open(result_dir / "final_paper.pdf") as document:
         assert DRAFT_LABEL in document[0].get_text()
         assert "Synthetic result: 4 of 10." in document[0].get_text()
-    assert (tmp_path / "literature_agent_output" / "references.bib").exists()
-    assert (
-        tmp_path / "content_refinement_workdir" / "final_refined_paper.tex"
-    ).exists()
+    assert (result_dir / "literature_agent_output" / "references.bib").exists()
+    assert (result_dir / "reviewed" / "final_refined_paper.tex").exists()
 
     report = json.loads(
-        (tmp_path / "literature_agent_output" / "discovery_report.json").read_text()
+        (result_dir / "literature_agent_output" / "discovery_report.json").read_text()
     )
     assert report["enabled_sources"] == ["fixture_connector"]
     assert report["coverage"][0]["status"] == "ok"
     citations = json.loads(
-        (tmp_path / "literature_agent_output" / "citation_map.json").read_text()
+        (result_dir / "literature_agent_output" / "citation_map.json").read_text()
     )
     assert next(iter(citations.values()))["doi"] == "10.1234/synthetic"
     assert (
         next(iter(citations.values()))["provenance"][0]["source"] == "fixture_connector"
     )
+
+    assert (result_dir / "manuscript.docx").is_file()
+    assert (result_dir / "evidence_review.csv").is_file()
+    assert paper_writer.write_single_paper(
+        str(tmp_path),
+        str(template),
+        idea_filename="idea_sparse.md",
+        writer_model_name="openai:writer",
+        reflection_model_name="anthropic:reviewer",
+        search_model_name="compatible:ranker",
+        research_cutoff="2026-01",
+        discovery_engine=discovery,
+        run_policy=RunPolicy(profiles, probe=False),
+        resume_run=str(result_dir),
+    )
+    assert not response_texts

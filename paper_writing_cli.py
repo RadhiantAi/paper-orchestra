@@ -84,6 +84,10 @@ def main():
         "--literature_sources",
         help="Comma-separated sources; defaults to LITERATURE_SOURCES or all four databases.",
     )
+    parser.add_argument(
+        "--resume_run",
+        help="Existing run folder inside output_dir/runs. Completed stages are hash-checked.",
+    )
     args = parser.parse_args()
 
     if args.use_plotting:
@@ -135,12 +139,6 @@ def main():
 
     os.makedirs(base_dir, exist_ok=True)
 
-    target_raw_materials = os.path.join(base_dir, "raw_materials")
-    if os.path.abspath(target_raw_materials) != os.path.abspath(args.raw_materials_dir):
-        if os.path.exists(target_raw_materials):
-            shutil.rmtree(target_raw_materials)
-        shutil.copytree(args.raw_materials_dir, target_raw_materials)
-
     if not args.use_plotting:
         has_figures = False
         figures_dir = os.path.join(args.raw_materials_dir, "figures")
@@ -183,6 +181,8 @@ def main():
         research_cutoff=args.research_cutoff,
         search_model_name=args.search_model_name,
         discovery_engine=discovery_engine,
+        resume_run=args.resume_run,
+        raw_materials_dir=args.raw_materials_dir,
     )
 
     if not success:

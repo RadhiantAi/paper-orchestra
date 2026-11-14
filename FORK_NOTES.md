@@ -25,11 +25,15 @@ PDF review sends extracted text and rendered page images through the selected pr
 
 ## Literature discovery
 
-Discovery now queries Semantic Scholar directly. The ranking model selects numbered records returned by the search API; unknown IDs are rejected. Search is paced to one request per second within a process. Search failures stop drafting, and drafting requires at least one verified reference with an abstract.
+Discovery queries PubMed, OpenAlex, Semantic Scholar and Crossref by default. Sources are configurable and independent of model choice. A common adapter interface supports additional sources, and an explicitly selected collection export can supply records and permitted full text. See [DISCOVERY.md](DISCOVERY.md) for limits, provenance and partial-coverage reporting.
 
-This changes search coverage from upstream's Google-grounded discovery. It removes the Gemini search requirement and supports local compatible models for ranking. Semantic Scholar is still an external service, so a local model does not make the whole workflow offline. Missing papers, rate limits and incomplete abstracts remain possible. Multiple processes do not share the rate limiter.
+On 14 November 2026, a small public-API check returned records from PubMed, OpenAlex and Crossref. Semantic Scholar returned HTTP 429, which was recorded as partial coverage. Subsequent validation is offline only. No live model calls were made.
 
-Paper existence and metadata matching do not verify that a cited claim is supported by the full text. Human full-text checks remain necessary. This fork does not implement a systematic-review search protocol or a clinical reporting checklist.
+Metadata matching does not verify that a cited claim is supported. The evidence-review table proposes passages for human checking, with abstract/full-text distinctions and missing-reference flags.
+
+## Reliable runs and editable outputs
+
+The pipeline saves separate run folders and hash-checked stage checkpoints. It can resume completed work, records model usage, checks declared capabilities and bounds calls and estimated spending. Generated TeX is compiled only in a restricted Docker container. A general medical template and editable Word export are included. Read [RELIABILITY.md](RELIABILITY.md) before starting a run.
 
 ## Draft safeguards
 
@@ -54,8 +58,8 @@ git diff --check
 
 Tests block external network calls. They cover all four provider adapters, mixed-provider orchestration, text/image/PDF requests, malformed and truncated responses, credential isolation, invalid literature IDs, plotting rejection, disabled email, draft labels and the Streamlit configuration screen. Windows AppTest permits its internal loopback socket pair.
 
-On 14 November 2026, 52 offline tests passed on Windows with Python 3.14. Critical Python lint checks and `git diff --check` also passed.
+The validation suite includes the mixed-provider workflow, source adapters, preserved runs, Word export and negative fixtures for the safety controls. See RELIABILITY.md for commands and the actual-compilation prerequisite.
 
-The complete workflow test uses synthetic source material and real agent/PDF code, with model responses, Semantic Scholar and LaTeX executables replaced by fixtures. Passing it does not establish live API access, actual TeX compilation or manuscript quality. Those checks belong to the separately approved trial.
+The complete workflow test uses synthetic source material and real agent/PDF code, with model responses, literature sources and LaTeX executables replaced by fixtures. Passing it does not establish live API access, actual TeX compilation or manuscript quality. Those checks belong to the separately approved trial.
 
 Provider API references checked on 14 November 2026: [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create), [Anthropic Messages](https://platform.claude.com/docs/en/api/messages) and [Google Gen AI Python SDK](https://googleapis.github.io/python-genai/).

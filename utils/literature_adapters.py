@@ -273,6 +273,31 @@ class CollectionSource:
         for item in data:
             item = dict(item)
             item.pop("evidence_level", None)
+            pdf_name = item.pop("pdf_path", None)
+            if pdf_name:
+                if not item.get("rights"):
+                    raise SourceError("collection_full_text_requires_rights_note")
+                selected = (self.path.parent / pdf_name).resolve()
+                if (
+                    not selected.is_relative_to(self.path.parent.resolve())
+                    or selected.suffix.lower() != ".pdf"
+                ):
+                    raise SourceError("collection_pdf_outside_selected_folder")
+                if selected.stat().st_size > 25_000_000:
+                    raise SourceError("collection_pdf_too_large")
+                import pymupdf
+
+                with pymupdf.open(selected) as document:
+                    if len(document) > 100:
+                        raise SourceError("collection_pdf_too_many_pages")
+                    item["full_text"] = "\n\n".join(
+                        f"[Page {i + 1}] " + page.get_text()
+                        for i, page in enumerate(document)
+                    )
+                    if not any(page.get_text().strip() for page in document):
+                        raise SourceError("collection_pdf_has_no_extractable_text")
+                item["full_text_url"] = selected.name
+
             # Metadata from an export is attributable to its original source.
             if not item.get("url"):
                 raise SourceError("collection_record_missing_source_url")
