@@ -10,6 +10,8 @@ from methods import paper_writer
 from methods.agents import literature_review_agent as literature
 from utils import pdf_utils, provider_backend
 from utils.draft_output import DRAFT_LABEL
+from utils.literature_sources import LiteratureRecord, SearchPage
+from utils.literature_discovery import DiscoveryConfig, DiscoveryEngine
 
 
 def test_synthetic_workflow_with_mixed_providers(tmp_path, monkeypatch):
@@ -35,17 +37,30 @@ def test_synthetic_workflow_with_mixed_providers(tmp_path, monkeypatch):
     (template / "guidelines.md").write_text("Synthetic test guidelines.")
     tex = "\\documentclass{article}\n\\begin{document}Synthetic result: 4 of 10.\\end{document}"
     (template / "template.tex").write_text(tex)
-    record = {
-        "title": "Synthetic reference",
-        "year": 2020,
-        "publicationDate": "2020-01-01",
-        "authors": [{"name": "Synthetic Author"}],
-        "abstract": "Synthetic abstract.",
-        "venue": "Test Journal",
-    }
-    monkeypatch.setattr(literature, "s2_search", lambda query: [record])
-    monkeypatch.setattr(literature, "s2_title_search", lambda *args: record)
-    monkeypatch.setattr(time, "sleep", lambda _: None)
+
+    class FixtureSource:
+        name = "fixture_connector"
+
+        def search(self, query, limit, cutoff, transport):
+            return SearchPage(
+                [
+                    LiteratureRecord(
+                        title="Synthetic reference",
+                        source="fixture_connector",
+                        source_id="test-1",
+                        year=2020,
+                        authors=["Synthetic Author"],
+                        abstract="Synthetic abstract.",
+                        doi="10.1234/synthetic",
+                        venue="Test Journal",
+                    )
+                ],
+                total=1,
+            )
+
+    discovery = DiscoveryEngine(
+        DiscoveryConfig(sources=("fixture_connector",)), extra_sources=[FixtureSource()]
+    )
     outline = {
         "intro_related_work_plan": {
             "introduction_strategy": {"search_directions": ["synthetic"]}
@@ -94,6 +109,7 @@ def test_synthetic_workflow_with_mixed_providers(tmp_path, monkeypatch):
             reflection_model_name="anthropic:reviewer",
             search_model_name="compatible:ranker",
             research_cutoff="2026-01",
+            discovery_engine=discovery,
         )
         is True
     )
@@ -114,3 +130,16 @@ def test_synthetic_workflow_with_mixed_providers(tmp_path, monkeypatch):
     assert (
         tmp_path / "content_refinement_workdir" / "final_refined_paper.tex"
     ).exists()
+
+    report = json.loads(
+        (tmp_path / "literature_agent_output" / "discovery_report.json").read_text()
+    )
+    assert report["enabled_sources"] == ["fixture_connector"]
+    assert report["coverage"][0]["status"] == "ok"
+    citations = json.loads(
+        (tmp_path / "literature_agent_output" / "citation_map.json").read_text()
+    )
+    assert next(iter(citations.values()))["doi"] == "10.1234/synthetic"
+    assert (
+        next(iter(citations.values()))["provenance"][0]["source"] == "fixture_connector"
+    )

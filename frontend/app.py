@@ -36,6 +36,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from methods.paper_writer import write_single_paper
 from utils.pdf_utils import pdf_to_grid_images
 from utils.llm_backend_utils import validate_model_configuration, ModelConfigurationError
+from utils.literature_discovery import DEFAULT_SOURCES
 
 st.set_page_config(
     page_title="Paper Orchestra - AI Paper Writer",
@@ -147,6 +148,15 @@ def render_sidebar():
     search_model = st.sidebar.text_input(
         "Literature ranking model (blank uses writer)", value=os.getenv("PAPER_SEARCH_MODEL", ""), disabled=st.session_state.locked
     )
+
+    source_options = [*DEFAULT_SOURCES, "collection"]
+    configured_sources = [s.strip() for s in os.getenv("LITERATURE_SOURCES", ",".join(DEFAULT_SOURCES)).split(",") if s.strip()]
+    st.sidebar.multiselect(
+        "Literature sources", source_options,
+        default=[s for s in configured_sources if s in source_options],
+        key="literature_sources", disabled=st.session_state.locked,
+    )
+    st.sidebar.caption("Collection searches only the export configured in LITERATURE_COLLECTION_PATH. Coverage and failures are saved with each run.")
 
     templates = ["cvpr2025", "iclr2025"]
     selected_template = st.sidebar.selectbox(
@@ -333,6 +343,8 @@ def handle_live_execution(
                 review_model or selected_model,
                 "--search_model_name",
                 search_model or selected_model,
+                "--literature_sources",
+                ",".join(st.session_state.literature_sources),
                 "--idea_filename",
                 "idea_sparse.md",
                 "--experimental_log_filename",
@@ -645,6 +657,9 @@ if not st.session_state.get("hide_inputs"):
             except ModelConfigurationError as error:
                 st.error(str(error))
                 st.stop()
+            if not st.session_state.literature_sources:
+                st.error("Choose at least one literature source.")
+                st.stop()
             st.session_state.saved_idea = st.session_state.get("idea_text_main")
             st.session_state.saved_log = st.session_state.get("log_text_main")
             st.session_state.locked = True
@@ -686,6 +701,15 @@ else:
     # 1. Timeline Tab
     with tab_timeline:
         st.subheader("Writing Progress")
+        report_path = os.path.join(st.session_state.get("run_directory") or "", "literature_agent_output", "discovery_report.json")
+        if os.path.isfile(report_path):
+            with open(report_path, encoding="utf-8") as report_file:
+                coverage_report = json.load(report_file)
+            st.info(f"Literature search coverage: {coverage_report['status']}. This is a bounded search.")
+            with st.expander("Literature source coverage"):
+                st.dataframe(coverage_report["coverage"])
+                st.download_button("Download search report", json.dumps(coverage_report, indent=2),
+                                   file_name="discovery_report.json", mime="application/json")
         for index, step in enumerate(steps):
             state_class, icon = (
                 ("finished", "✓")

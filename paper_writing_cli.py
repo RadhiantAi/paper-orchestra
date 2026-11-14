@@ -17,6 +17,7 @@ import sys
 import os
 import shutil
 from datetime import datetime
+from utils.literature_discovery import DiscoveryConfig, DiscoveryEngine
 from utils.llm_backend_utils import (
     validate_model_configuration,
     ModelConfigurationError,
@@ -79,6 +80,10 @@ def main():
         default=os.getenv("PAPER_SEARCH_MODEL"),
         help="Model for ranking retrieved papers. Defaults to the writer.",
     )
+    parser.add_argument(
+        "--literature_sources",
+        help="Comma-separated sources; defaults to LITERATURE_SOURCES or all four databases.",
+    )
     args = parser.parse_args()
 
     if args.use_plotting:
@@ -96,6 +101,17 @@ def main():
         ):
             validate_model_configuration(selected_model)
     except ModelConfigurationError as error:
+        parser.error(str(error))
+
+    try:
+        discovery_config = DiscoveryConfig.from_env()
+        if args.literature_sources is not None:
+            discovery_config.sources = tuple(
+                s.strip() for s in args.literature_sources.split(",") if s.strip()
+            )
+            discovery_config.__post_init__()
+        discovery_engine = DiscoveryEngine(discovery_config)
+    except ValueError as error:
         parser.error(str(error))
 
     print(
@@ -166,6 +182,7 @@ def main():
         reflection_model_name=args.reflection_model_name,
         research_cutoff=args.research_cutoff,
         search_model_name=args.search_model_name,
+        discovery_engine=discovery_engine,
     )
 
     if not success:

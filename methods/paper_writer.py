@@ -21,6 +21,7 @@ import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from utils.llm_backend_utils import validate_model_configuration
+from utils.literature_discovery import DiscoveryEngine
 from methods.agents.outline_agent import OutlineAgent
 from methods.agents.literature_review_agent import HybridLiteratureAgent
 from methods.agents.section_writing_agent import SectionWritingAgent
@@ -40,12 +41,18 @@ def write_single_paper(
     reflection_model_name: str = None,
     research_cutoff: str = "2024-11",
     search_model_name: str = None,
+    discovery_engine=None,
 ):
     writer_model_name = writer_model_name or os.getenv("PAPER_WRITER_MODEL")
-    reflection_model_name = reflection_model_name or os.getenv("PAPER_REVIEW_MODEL") or writer_model_name
-    search_model_name = search_model_name or os.getenv("PAPER_SEARCH_MODEL") or writer_model_name
+    reflection_model_name = (
+        reflection_model_name or os.getenv("PAPER_REVIEW_MODEL") or writer_model_name
+    )
+    search_model_name = (
+        search_model_name or os.getenv("PAPER_SEARCH_MODEL") or writer_model_name
+    )
     for selected_model in (writer_model_name, reflection_model_name, search_model_name):
         validate_model_configuration(selected_model)
+    discovery_engine = discovery_engine or DiscoveryEngine()
     latex_writeup_dir = osp.join(base_dir, "latex_writeup")
     pdf_file = osp.join(base_dir, "final_paper.pdf")
 
@@ -68,9 +75,9 @@ def write_single_paper(
 
     while (not succeed) and (cur_try < max_n_tries):
         try:
-            assert osp.exists(
-                materials_dir
-            ), f"Please make sure '{materials_dir}' exists!"
+            assert osp.exists(materials_dir), (
+                f"Please make sure '{materials_dir}' exists!"
+            )
 
             shutil.copytree(latex_template_dir, latex_writeup_dir, dirs_exist_ok=True)
 
@@ -82,18 +89,18 @@ def write_single_paper(
                 materials_dir, experimental_log_filename
             )
 
-            assert osp.exists(
-                guidelines_path
-            ), f"No guidelines file detected at '{guidelines_path}'!"
-            assert osp.exists(
-                latex_template_path
-            ), f"No template file detected at '{latex_template_path}'!"
-            assert osp.exists(
-                idea_file_path
-            ), f"No idea file detected at '{idea_file_path}'!"
-            assert osp.exists(
-                experimental_log_file_path
-            ), f"No experimental log file detected at '{experimental_log_file_path}'!"
+            assert osp.exists(guidelines_path), (
+                f"No guidelines file detected at '{guidelines_path}'!"
+            )
+            assert osp.exists(latex_template_path), (
+                f"No template file detected at '{latex_template_path}'!"
+            )
+            assert osp.exists(idea_file_path), (
+                f"No idea file detected at '{idea_file_path}'!"
+            )
+            assert osp.exists(experimental_log_file_path), (
+                f"No experimental log file detected at '{experimental_log_file_path}'!"
+            )
 
             ###############################################################################################
             # Step 1: Call outline agent
@@ -121,6 +128,7 @@ def write_single_paper(
                 model_name=writer_model_name,
                 max_workers=3,
                 search_model_name=search_model_name,
+                discovery_engine=discovery_engine,
             )
             literature_agent.run(
                 outline_path=outline_file_path,
@@ -183,9 +191,9 @@ def write_single_paper(
             content_refinment_agent_output_pdf_path = content_refinement_agent.run(
                 texfile_path=raw_draft_tex_path
             )
-            assert osp.exists(
-                content_refinment_agent_output_pdf_path
-            ), f"Content Refinement Agent failed to produce final PDF at {content_refinment_agent_output_pdf_path}!"
+            assert osp.exists(content_refinment_agent_output_pdf_path), (
+                f"Content Refinement Agent failed to produce final PDF at {content_refinment_agent_output_pdf_path}!"
+            )
 
             final_pdf_path = osp.join(base_dir, "final_paper.pdf")
             print(
@@ -198,7 +206,7 @@ def write_single_paper(
             return True
 
         except Exception:
-            print(f"[Try {cur_try+1}/{max_n_tries}] EXCEPTION in perform_writeup:")
+            print(f"[Try {cur_try + 1}/{max_n_tries}] EXCEPTION in perform_writeup:")
             print(traceback.format_exc())
             cur_try += 1
             if cur_try < max_n_tries:

@@ -3,6 +3,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from methods.agents import literature_review_agent as literature
+from utils.literature_sources import LiteratureRecord
+
+
+def records_from_dicts(records):
+    return [
+        LiteratureRecord(source="pubmed", source_id=str(i), **r)
+        for i, r in enumerate(records)
+    ]
 
 
 @pytest.fixture
@@ -26,7 +34,9 @@ def test_ranker_can_only_select_retrieved_records(agent, monkeypatch):
             "year": 2020,
         }
     ]
-    monkeypatch.setattr(literature, "s2_search", lambda query: records)
+    monkeypatch.setattr(
+        agent.discovery, "search", lambda *args: records_from_dicts(records)
+    )
     model = MagicMock(return_value={"parsed_response": {"selected_ids": [0, 0]}})
     monkeypatch.setattr(literature, "call_llm_with_contents", model)
     result = agent._discover_candidates({"focus": "test"}, {}, "2026-01")
@@ -37,9 +47,11 @@ def test_ranker_can_only_select_retrieved_records(agent, monkeypatch):
 @pytest.mark.parametrize("ids", [[1], [-1], [True], ["0"], None])
 def test_invented_or_malformed_candidate_ids_fail(agent, monkeypatch, ids):
     monkeypatch.setattr(
-        literature,
-        "s2_search",
-        lambda query: [{"title": "Synthetic", "abstract": "Abstract", "year": 2020}],
+        agent.discovery,
+        "search",
+        lambda *args: records_from_dicts(
+            [{"title": "Synthetic", "abstract": "Abstract", "year": 2020}]
+        ),
     )
     monkeypatch.setattr(
         literature,
@@ -73,9 +85,11 @@ def test_search_failure_is_not_silent_success(agent, monkeypatch):
 def test_full_abstract_is_available_to_ranker(agent, monkeypatch):
     abstract = "a" * 2000 + "critical limitation"
     monkeypatch.setattr(
-        literature,
-        "s2_search",
-        lambda query: [{"title": "Synthetic", "abstract": abstract, "year": 2020}],
+        agent.discovery,
+        "search",
+        lambda *args: records_from_dicts(
+            [{"title": "Synthetic", "abstract": abstract, "year": 2020}]
+        ),
     )
     model = MagicMock(return_value={"parsed_response": {"selected_ids": []}})
     monkeypatch.setattr(literature, "call_llm_with_contents", model)
