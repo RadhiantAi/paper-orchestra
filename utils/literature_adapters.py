@@ -17,7 +17,7 @@ from utils.literature_sources import (
 class PubMedSource:
     name = "pubmed"
 
-    def search(self, query, limit, cutoff, transport):
+    def search(self, query, limit, cutoff, transport, cursor=None):
         base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
         common = {"db": "pubmed", "tool": "paper_orchestra"}
         if os.getenv("NCBI_API_KEY"):
@@ -30,6 +30,7 @@ class PubMedSource:
             "retmax": limit,
             "retmode": "json",
             "sort": "relevance",
+            "retstart": int(cursor or 0),
         }
         if cutoff:
             params.update(
@@ -103,14 +104,24 @@ class PubMedSource:
             )
         if len(records) < len(ids):
             warnings.append("some_pubmed_records_not_hydrated")
-        return SearchPage(records, total, total > len(records), warnings)
+        following = int(cursor or 0) + len(ids)
+        more = following < min(total, 9999)
+        if total > 9999:
+            warnings.append("pubmed_10000_window_split_query")
+        return SearchPage(
+            records,
+            total,
+            more or total > 9999,
+            warnings,
+            str(following) if more and ids else None,
+        )
 
 
 class OpenAlexSource:
     name = "openalex"
 
-    def search(self, query, limit, cutoff, transport):
-        params = {"search": query, "per_page": limit}
+    def search(self, query, limit, cutoff, transport, cursor=None):
+        params = {"search": query, "per_page": limit, "cursor": cursor or "*"}
         if cutoff:
             params["filter"] = f"to_publication_date:{cutoff}"
         if os.getenv("OPENALEX_API_KEY"):
@@ -152,16 +163,22 @@ class OpenAlexSource:
                 )
             )
         total = int(data["meta"]["count"])
-        return SearchPage(records, total, total > len(records))
+        return SearchPage(
+            records,
+            total,
+            bool(data["meta"].get("next_cursor")) or total > len(records),
+            next_cursor=data["meta"].get("next_cursor") if records else None,
+        )
 
 
 class SemanticScholarSource:
     name = "semantic_scholar"
 
-    def search(self, query, limit, cutoff, transport):
+    def search(self, query, limit, cutoff, transport, cursor=None):
         params = {
             "query": query,
             "limit": limit,
+            "offset": int(cursor or 0),
             "fields": "title,authors,year,abstract,venue,publicationDate,externalIds,url,openAccessPdf,journal",
         }
         if cutoff:
@@ -206,15 +223,18 @@ class SemanticScholarSource:
             )
         total = int(data["total"])
         return SearchPage(
-            records, total, total > len(records) or data.get("next") is not None
+            records,
+            total,
+            total > int(cursor or 0) + len(records) or data.get("next") is not None,
+            next_cursor=str(data["next"]) if data.get("next") is not None else None,
         )
 
 
 class CrossrefSource:
     name = "crossref"
 
-    def search(self, query, limit, cutoff, transport):
-        params = {"query.bibliographic": query, "rows": limit}
+    def search(self, query, limit, cutoff, transport, cursor=None):
+        params = {"query.bibliographic": query, "rows": limit, "cursor": cursor or "*"}
         if cutoff:
             params["filter"] = f"until-pub-date:{cutoff}"
         if os.getenv("LITERATURE_CONTACT_EMAIL"):
@@ -249,7 +269,12 @@ class CrossrefSource:
                 )
             )
         total = int(data["total-results"])
-        return SearchPage(records, total, total > len(records))
+        return SearchPage(
+            records,
+            total,
+            total > len(records),
+            next_cursor=data.get("next-cursor") if len(records) == limit else None,
+        )
 
 
 class CollectionSource:

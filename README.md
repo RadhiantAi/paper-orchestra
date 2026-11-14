@@ -95,3 +95,10 @@ If you find this repo or our paper helpful, please cite it as follows:
 # Disclaimer
 
 This is not an officially supported Google product.
+# Research review additions
+
+See [RESEARCH_REVIEW.md](RESEARCH_REVIEW.md) for the offline quality benchmark,
+aggregate numerical checks, evidence review, controlled revisions, paginated
+discovery, optional read-only web/Zotero/MCP adapters, PMC passages and publication
+status checks. The chat-assisted exchange can review a manuscript without model
+API calls. Keep private research inputs outside this public checkout.

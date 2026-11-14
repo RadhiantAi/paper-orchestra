@@ -68,6 +68,8 @@ class PaperData(BaseModel):
     evidence_level: str = "metadata"
     provenance: List[Dict] = []
     conflicts: List[Dict] = []
+    integrity: Dict = {}
+    passages: List[Dict] = []
     found_in_sections: List[str] = []
 
 
@@ -410,6 +412,17 @@ class HybridLiteratureAgent:
         ):
             raise ValueError("Literature selection contained invalid candidate IDs.")
         retained = [records[i] for i in dict.fromkeys(selected)]
+        if self.discovery.config.enrich_selected:
+            self.discovery.enrich_records(retained)
+            retained = [r for r in retained if r.integrity.get('status') not in {'retracted', 'withdrawn', 'metadata_conflict'}]
+        selected_keys = {(r.source, r.source_id) for r in retained}
+        with self.discovery.lock:
+            for record in records:
+                self.discovery.report.setdefault('screening', []).append({
+                    'source_id': record.source_id, 'title': record.title,
+                    'decision': 'include_for_review' if (record.source, record.source_id) in selected_keys else 'exclude',
+                    'reason': 'model_relevance_selection' if (record.source, record.source_id) in selected_keys
+                              else 'not_selected_or_retracted', 'task': task})
         self.discovery.record_selection(task, retained)
         return [r.to_dict() for r in retained]
 

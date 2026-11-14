@@ -68,11 +68,13 @@ class LiteratureRecord:
     rights: str = ""
     provenance: list[dict] = field(default_factory=list)
     conflicts: list[dict] = field(default_factory=list)
+    integrity: dict = field(default_factory=lambda: {"status": "unknown"})
+    passages: list[dict] = field(default_factory=list)
 
     def __post_init__(self):
         self.title = clean_text(self.title)
         self.doi = normalise_doi(self.doi)
-        self.pmid = str(self.pmid or "").rsplit("/", 1)[-1]
+        self.pmid = str(self.pmid or "").rstrip("/").rsplit("/", 1)[-1]
         if not self.title or not self.source or not self.source_id:
             raise ValueError("Literature records require title, source and source_id.")
 
@@ -96,6 +98,7 @@ class SearchPage:
     total: int | None = None
     truncated: bool = False
     warnings: list[str] = field(default_factory=list)
+    next_cursor: str | None = None
 
 
 class LiteratureSource(Protocol):
@@ -139,6 +142,28 @@ class SearchTransport:
     def get(
         self, source, url, *, params=None, headers=None, interval=1.0, as_json=True
     ):
+        return self.request(
+            source,
+            url,
+            params=params,
+            headers=headers,
+            interval=interval,
+            as_json=as_json,
+        )
+
+    def request(
+        self,
+        source,
+        url,
+        *,
+        params=None,
+        headers=None,
+        interval=1.0,
+        as_json=True,
+        method="GET",
+        body=None,
+        with_headers=False,
+    ):
         # Serialize reservation and pacing across all tasks in this discovery run.
         with self.lock:
             if self.requests_used >= self.max_requests or self.remaining() <= 0:
@@ -153,7 +178,9 @@ class SearchTransport:
             self.last_requests[source] = time.monotonic()
             timeout = min(self.timeout, self.remaining())
         try:
-            with requests.get(
+            request = requests.get if method == "GET" else requests.post
+            extra = {"json": body} if method == "POST" else {}
+            with request(
                 url,
                 params=params,
                 headers={
@@ -163,8 +190,9 @@ class SearchTransport:
                 timeout=timeout,
                 stream=True,
                 allow_redirects=False,
+                **extra,
             ) as response:
-                if response.status_code != 200:
+                if response.status_code not in (200, 202):
                     raise SourceError(f"http_{response.status_code}")
                 chunks, length = [], 0
                 for chunk in response.iter_content(65536):
@@ -174,12 +202,45 @@ class SearchTransport:
                     if self.remaining() <= 0:
                         raise BudgetExceeded("time_budget_exhausted")
                     chunks.append(chunk)
+                    # Streamable HTTP may keep an SSE connection open after its reply.
+                    # Stop only once a complete event for our request ID has arrived.
+                    if (
+                        method == "POST"
+                        and body
+                        and "id" in body
+                        and "text/event-stream"
+                        in response.headers.get("Content-Type", "")
+                    ):
+                        import json
+
+                        raw_events = (
+                            b"".join(chunks).replace(b"\r\n", b"\n").split(b"\n\n")[:-1]
+                        )
+                        complete = False
+                        for event in raw_events:
+                            data = b"\n".join(
+                                line[5:].lstrip()
+                                for line in event.splitlines()
+                                if line.startswith(b"data:")
+                            )
+                            if not data:
+                                continue
+                            try:
+                                item = json.loads(data)
+                                complete |= item.get("id") == body["id"] and (
+                                    "result" in item or "error" in item
+                                )
+                            except (ValueError, AttributeError):
+                                continue
+                        if complete:
+                            break
                 payload = b"".join(chunks)
+                response_headers = dict(response.headers)
             if as_json:
                 import json
 
-                return json.loads(payload)
-            return payload
+                payload = json.loads(payload) if payload else None
+            return (payload, response_headers) if with_headers else payload
         except SourceError:
             raise
         except requests.Timeout:
@@ -247,6 +308,13 @@ def merge_records(records):
         if record.full_text and not match.full_text:
             match.full_text, match.rights = record.full_text, record.rights
             match.full_text_url = record.full_text_url
+            match.passages = record.passages
+        if record.integrity.get("status") in {
+            "retracted",
+            "withdrawn",
+            "update_requires_review",
+        }:
+            match.integrity = record.integrity
         for key in ("url", "full_text_url", "rights"):
             if not getattr(match, key):
                 setattr(match, key, getattr(record, key))

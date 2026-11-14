@@ -1,0 +1,12 @@
+[
+  {"type": "web"},
+  {"type": "zotero", "name": "zotero", "library": "users/123456", "collection": "ABCDEFGH"},
+  {
+    "type": "mcp",
+    "name": "selected_mcp",
+    "endpoint": "https://research.example.org/mcp",
+    "tool": "search_literature",
+    "argument_names": {"query": "query", "limit": "limit", "cursor": "cursor"},
+    "token_env": "RESEARCH_MCP_TOKEN"
+  }
+]

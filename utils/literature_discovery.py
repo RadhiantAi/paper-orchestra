@@ -3,6 +3,7 @@
 from copy import deepcopy
 from dataclasses import dataclass
 import json
+import hashlib
 import os
 from pathlib import Path
 import threading
@@ -33,6 +34,9 @@ class DiscoveryConfig:
     request_timeout: float = 20
     require_all_sources: bool = False
     collection_path: str = ""
+    max_pages: int = 1
+    connector_config: str = ""
+    enrich_selected: bool = False
 
     def __post_init__(self):
         if not self.sources or len(set(self.sources)) != len(self.sources):
@@ -41,6 +45,8 @@ class DiscoveryConfig:
             raise ValueError("Literature results per source must be between 1 and 100.")
         if self.max_requests < 1 or self.max_seconds <= 0 or self.request_timeout <= 0:
             raise ValueError("Literature request and time budgets must be positive.")
+        if not 1 <= self.max_pages <= 20:
+            raise ValueError("Choose 1-20 pages per source/query.")
 
     @classmethod
     def from_env(cls):
@@ -61,14 +67,30 @@ class DiscoveryConfig:
             ).lower()
             == "true",
             collection_path=os.getenv("LITERATURE_COLLECTION_PATH", ""),
+            max_pages=int(os.getenv("LITERATURE_MAX_PAGES", "1")),
+            connector_config=os.getenv("LITERATURE_CONNECTOR_CONFIG", ""),
+            enrich_selected=os.getenv("LITERATURE_ENRICH_SELECTED", "false").lower()
+            == "true",
         )
 
 
 class DiscoveryEngine:
     def __init__(self, config=None, *, extra_sources=None, transport=None):
         self.config = config or DiscoveryConfig.from_env()
+        self.input_fingerprints = {
+            key: hashlib.sha256(Path(value).read_bytes()).hexdigest()
+            for key in ("collection_path", "connector_config")
+            if (value := getattr(self.config, key, ""))
+        }
         registry = {name: cls() for name, cls in BUILTIN_SOURCES.items()}
         registry["collection"] = CollectionSource(self.config.collection_path)
+        if self.config.connector_config:
+            from utils.connected_sources import configured_sources
+
+            for source in configured_sources(self.config.connector_config):
+                if source.name in registry:
+                    raise ValueError("Connector names must be unique.")
+                registry[source.name] = source
         for source in extra_sources or []:
             if source.name in registry:
                 raise ValueError(
@@ -141,9 +163,46 @@ class DiscoveryEngine:
                     page = source.search(
                         query, self.config.per_source_limit, end, self.transport
                     )
+                    pages = [page]
+                    seen_cursors = set()
+                    while page.next_cursor and len(pages) < self.config.max_pages:
+                        if page.next_cursor in seen_cursors:
+                            page.warnings.append("repeated_cursor")
+                            break
+                        seen_cursors.add(page.next_cursor)
+                        try:
+                            page = source.search(
+                                query,
+                                self.config.per_source_limit,
+                                end,
+                                self.transport,
+                                cursor=page.next_cursor,
+                            )
+                            if (
+                                not isinstance(page, SearchPage)
+                                or len(page.records) > self.config.per_source_limit
+                            ):
+                                raise SourceError("invalid_adapter_response")
+                            pages.append(page)
+                        except Exception:
+                            # Preserve successful pages and mark incomplete coverage.
+                            page.warnings.append(
+                                "later_page_failed_or_budget_exhausted"
+                            )
+                            failed = True
+                            entry["status"] = "partial"
+                            break
+                    page = SearchPage(
+                        [r for p in pages for r in p.records],
+                        pages[0].total,
+                        pages[-1].truncated,
+                        [w for p in pages for w in p.warnings],
+                    )
+                    entry["pages_retrieved"] = len(pages)
                     if (
                         not isinstance(page, SearchPage)
-                        or len(page.records) > self.config.per_source_limit
+                        or len(page.records)
+                        > self.config.per_source_limit * self.config.max_pages
                     ):
                         raise SourceError("invalid_adapter_response")
                     entry.update(
@@ -250,6 +309,20 @@ class DiscoveryEngine:
                 }
             )
 
+    def enrich_records(self, records):
+        from utils.literature_enrichment import fetch_pmc, check_integrity
+
+        with self.lock:
+            for record in records:
+                entry = {"doi": record.doi, "pmcid": record.pmcid}
+                entry["integrity"] = check_integrity(record, self.transport)
+                try:
+                    entry["full_text"] = fetch_pmc(record, self.transport)
+                except Exception:
+                    entry["full_text"] = {"status": "failed_or_budget_exhausted"}
+                self.report.setdefault("enrichment", []).append(entry)
+        return records
+
     def restore_report(self, output_dir):
         """Carry request/time usage forward when a failed discovery stage resumes."""
         path = Path(output_dir)
@@ -274,6 +347,14 @@ class DiscoveryEngine:
         with self.lock:
             report = deepcopy(self.report)
             failures = any(e["status"] != "ok" for e in report["coverage"])
+            failures |= any(
+                e["status"] != "ok" for e in report.get("citation_chasing", [])
+            )
+            failures |= any(
+                e.get("integrity", {}).get("reason") == "lookup_failed"
+                or e.get("full_text", {}).get("status") == "failed_or_budget_exhausted"
+                for e in report.get("enrichment", [])
+            )
             bounded = any(e["truncated"] or e["warnings"] for e in report["coverage"])
             report["status"] = (
                 "partial" if failures else "bounded" if bounded else "completed_queries"

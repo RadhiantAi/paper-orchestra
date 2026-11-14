@@ -42,7 +42,7 @@ def offline_environment(monkeypatch, request):
 
     def no_network(sock, address):
         # Windows asyncio creates a loopback socket pair for AppTest's event loop.
-        if request.node.path.name == "test_frontend.py" and address[0] in {
+        if request.node.path.name in {"test_frontend.py", "test_research_review_ui.py"} and address[0] in {
             "127.0.0.1",
             "::1",
         }:

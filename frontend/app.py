@@ -851,6 +851,8 @@ else:
 
     # 5. Citation Map Tab
     with tab_citation:
+        from frontend.research_review import render_review
+        render_review(current_artifact_dir())
         render_json_file(
             os.path.join("literature_agent_output", "citation_map.json"),
             "Citation Map",

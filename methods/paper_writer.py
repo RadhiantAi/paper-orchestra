@@ -91,6 +91,7 @@ def write_single_paper(
         "idea_file": idea_filename,
         "log_file": experimental_log_filename,
         "discovery": vars(discovery_engine.config),
+        "discovery_inputs": discovery_engine.input_fingerprints,
         "profiles": policy.profiles,
         "probe": policy.probe,
         "max_output_tokens": os.getenv("PAPER_MAX_OUTPUT_TOKENS", "16384"),
@@ -222,6 +223,13 @@ def write_single_paper(
         shutil.copy2(result, folder / "final_paper.pdf")
 
     def exports():
+        from utils.research_quality import numeric_audit
+        from utils.run_control import write_json
+        manuscript_text = (folder / "reviewed" / "main.tex").read_text(encoding="utf-8")
+        write_json(folder / "numeric_audit.json", numeric_audit(manuscript_text))
+        write_json(folder / "manuscript_sections.json", {
+            "manuscript": {"text": manuscript_text, "approval": None}
+        })
         evidence_ledger(
             folder / "reviewed" / "main.tex", literature / "citation_map.json", folder
         )
@@ -247,6 +255,8 @@ def write_single_paper(
                     "evidence_review.csv",
                     "manuscript.docx",
                     "word_export_report.json",
+                    "numeric_audit.json",
+                    "manuscript_sections.json",
                 ],
             )
             run.manifest.update(status="complete")

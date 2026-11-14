@@ -92,7 +92,8 @@ def evidence_ledger(tex_path, citation_map_path, output_dir):
                     reference.get("abstract") or "",
                 )
                 text = full_text or abstract
-                passages = [
+                structured_passages = reference.get('passages') or []
+                passages = [p['text'] for p in structured_passages] or [
                     p.strip()
                     for p in re.split(r"(?<=[.!?])\s+|\n\n", text)
                     if p.strip()
@@ -129,6 +130,11 @@ def evidence_ledger(tex_path, citation_map_path, output_dir):
                     if not full_text
                     else "no_matching_passage",
                 )
+                matched = next((p for p in structured_passages if p['text'] == candidate), None)
+                if matched:
+                    row['passage_origin'] = f"{matched.get('section', '')}, paragraph {matched.get('paragraph', '')}, page {matched.get('page') or 'unavailable'}"
+                if reference.get('integrity', {}).get('status') in {'retracted', 'withdrawn'}:
+                    row['status'] = 'retracted_evidence_do_not_rely'
             rows.append(row)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)

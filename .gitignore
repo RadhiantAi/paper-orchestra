@@ -9,3 +9,5 @@ paper_output*
 .pytest_cache/
 __pycache__/
 model-policy.json
+connectors.json
+private/
