@@ -350,3 +350,15 @@ def test_invalid_configuration_rejected(config):
 def test_unknown_source_is_rejected_instead_of_silent_fallback():
     with pytest.raises(ValueError, match="Unknown literature"):
         DiscoveryEngine(DiscoveryConfig(sources=("not_registered",)))
+
+
+def test_resumed_discovery_retains_request_budget(tmp_path):
+    first = engine_for(FixtureSource("fixture", [paper()]), max_requests=2)
+    first.search("test")
+    first.transport.requests_used = 2
+    first.save_report(tmp_path)
+    resumed = engine_for(FixtureSource("fixture", [paper()]), max_requests=2)
+    resumed.restore_report(tmp_path)
+    with pytest.raises(BudgetExceeded):
+        resumed.transport.get("fixture", "https://example.invalid")
+    assert resumed.transport.requests_used == 2

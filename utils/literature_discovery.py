@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import threading
+import time
 
 from utils.literature_adapters import BUILTIN_SOURCES, CollectionSource
 from utils.literature_sources import (
@@ -249,6 +250,25 @@ class DiscoveryEngine:
                 }
             )
 
+    def restore_report(self, output_dir):
+        """Carry request/time usage forward when a failed discovery stage resumes."""
+        path = Path(output_dir)
+        report_path = path / "discovery_report.json"
+        if self.report["coverage"] or not report_path.exists():
+            return
+        previous = json.loads(report_path.read_text(encoding="utf-8"))
+        self.report = previous
+        self.transport.requests_used = previous["http_requests_used"]
+        self.transport.started = time.monotonic() - previous.get("elapsed_seconds", 0)
+        records_path = path / "retrieved_records.json"
+        if records_path.exists():
+            self.records = [
+                LiteratureRecord(
+                    **{k: v for k, v in record.items() if k != "evidence_level"}
+                )
+                for record in json.loads(records_path.read_text(encoding="utf-8"))
+            ]
+
     def save_report(self, output_dir):
         """Save before writing, and on errors, so missing sources never disappear."""
         with self.lock:
@@ -264,6 +284,9 @@ class DiscoveryEngine:
                 updated_at=utc_now(),
                 http_requests_used=self.transport.requests_used,
                 retrieved_record_count=len(self.records),
+                elapsed_seconds=max(0, time.monotonic() - self.transport.started)
+                if getattr(self.transport, "started", None) is not None
+                else 0,
             )
             path = Path(output_dir)
             path.mkdir(parents=True, exist_ok=True)

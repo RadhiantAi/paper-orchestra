@@ -122,7 +122,7 @@ TeX executables replaced by fixtures. It also resumes without further model call
 GitHub Actions defines Windows/Linux tests and a separate real containerised TeX
 test. To run that TeX test locally after building the image, set
 `RUN_TEX_INTEGRATION=1` and run `python -m pytest tests/test_reliability.py -k real_isolated_tex`.
-On 14 November 2026, the local suite passed 86 tests with one real-TeX test skipped. Dependency checks and critical Python lint checks passed.
+On 14 November 2026, the local suite passed 87 tests with one real-TeX test skipped. Dependency checks and critical Python lint checks passed.
 
 The local Docker engine was not running during implementation, so that real TeX
 test was skipped locally. A passing fixture is not evidence of actual TeX execution.

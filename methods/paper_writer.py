@@ -170,6 +170,7 @@ def write_single_paper(
     literature = folder / "literature_agent_output"
 
     def discover():
+        discovery_engine.restore_report(literature)
         HybridLiteratureAgent(
             str(idea),
             str(log),
@@ -423,7 +424,7 @@ def run_batch_writeup(
     idea_filename: str = "idea_sparse.md",
     experimental_log_filename: str = "experimental_log.md",
     writer_model_name: str = None,
-    research_cutoff: str = "2024-11",
+    research_cutoff: str = None,
     n_papers=-1,
     max_workers=4,
 ):
