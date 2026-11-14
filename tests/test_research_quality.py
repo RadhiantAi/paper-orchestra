@@ -138,3 +138,29 @@ def test_revision_marks_derived_reports_stale(tmp_path):
     save_revision(root, proposal, "Reviewer")
     for name in ("numeric_audit.json", "evidence_review.json"):
         assert json.loads((root / name).read_text())["status"] == "stale_after_revision"
+
+
+def test_word_export_rejects_silent_loss_of_counts(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from docx import Document
+    from utils.research_exports import export_word
+    source = tmp_path / "source.tex"
+    source.write_text(r"Result: 20 (25\%).", encoding="utf-8")
+    def convert(command, **kwargs):
+        doc = Document()
+        doc.add_paragraph("Result: (25%).")
+        doc.save(command[command.index("--output") + 1])
+        return SimpleNamespace(returncode=0, stderr="")
+    monkeypatch.setattr("utils.research_exports.subprocess.run", convert)
+    with pytest.raises(RuntimeError, match="lost count/percentage"):
+        export_word(source, tmp_path / "output.docx")
+    assert not (tmp_path / "output.docx").exists()
+
+
+def test_markdown_word_export_preserves_table_counts(tmp_path):
+    from docx import Document
+    from utils.research_exports import export_word
+    source = tmp_path / "source.md"
+    source.write_text("| Finding | Children |\n|---|---:|\n| Long descriptive anatomical label for a synthetic example | 20 (25.0%) |\n", encoding="utf-8")
+    export_word(source, tmp_path / "output.docx", source_format="markdown")
+    assert Document(tmp_path / "output.docx").tables[0].cell(1, 1).text == "20 (25.0%)"

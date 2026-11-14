@@ -1,6 +1,7 @@
 """Editable Word drafts and evidence passages for human claim review."""
 
 import csv
+from collections import Counter
 import json
 from pathlib import Path
 import re
@@ -12,13 +13,15 @@ import pypandoc
 from utils.run_control import write_json
 
 
-def export_word(tex_path, output_path, bibliography=None):
+def export_word(tex_path, output_path, bibliography=None, *, source_format="latex"):
+    if source_format not in {"latex", "markdown"}:
+        raise ValueError("Word input must be LaTeX or Markdown.")
     tex_path, output_path = Path(tex_path).resolve(), Path(output_path).resolve()
     temporary = output_path.with_suffix(".tmp.docx")
     command = [
         pypandoc.get_pandoc_path(),
         "--sandbox",
-        "--from=latex",
+        "--from=" + source_format,
         "--to=docx",
         "--standalone",
         str(tex_path),
@@ -35,6 +38,19 @@ def export_word(tex_path, output_path, bibliography=None):
     if result.returncode or not temporary.is_file():
         raise RuntimeError("Word export failed. The PDF and LaTeX remain available.")
     document = Document(temporary)
+    # Pandoc can silently discard a leading count in complex LaTeX table cells.
+    # Fail before promoting the output if recognised count/percentage pairs vanish.
+    pairs = re.compile(r"(?<![\w.])(\d+)\s*\(\s*(\d+(?:\.\d+)?)\s*\\?%\s*\)")
+    expected = Counter(pairs.findall(tex_path.read_text(encoding="utf-8")))
+    actual_text = "\n".join(p.text for p in document.paragraphs)
+    actual_text += "\n" + "\n".join(
+        cell.text for table in document.tables for row in table.rows for cell in row.cells
+    )
+    missing = expected - Counter(pairs.findall(actual_text))
+    if missing:
+        raise RuntimeError(
+            "Word export lost count/percentage pairs. Review the source table format; the output was not promoted."
+        )
     document.sections[0].header.paragraphs[0].text = "DRAFT - Human review required"
     document.core_properties.subject = "Editable research draft; verify equations, references and layout against the PDF."
     document.save(temporary)
@@ -44,6 +60,8 @@ def export_word(tex_path, output_path, bibliography=None):
         {
             "status": "created",
             "converter": "Pandoc with sandbox enabled",
+            "source_format": source_format,
+            "checked_count_percentage_pairs": sum(expected.values()),
             "warnings": result.stderr[-8000:],
             "review_required": "Compare equations, tables, images and citations with the compiled PDF.",
         },

@@ -25,6 +25,12 @@ Optional `subset_of` and `sum_of` fields refer to other fact IDs. Never supply
 patient rows. Empty approval/source fields are flagged. Quote mapping is explicit;
 the tool does not infer which number belongs to which biological variable.
 
+For a chat-assisted Markdown draft, `export_word(source, destination,
+source_format="markdown")` from `utils.research_exports` converts directly to Word.
+Both LaTeX and Markdown exports check recognised count/percentage pairs before
+promoting the result. A failed preservation check stops the export; it does not
+silently repair scientific content. Render and inspect the exported document.
+
 Count/percentage checks use the supplied denominator as a hypothesis and allow
 rounding at the printed precision. They never replace the study denominator.
 Unrecognised prose, tables without count/percentage pairs and unmapped numerical
