@@ -19,7 +19,7 @@ PYTHONUNBUFFERED=1 nohup conda run --no-capture-output -n $MY_ENV python paper_w
 --raw_materials_dir datasets/cvpr2025/papers/${PAPER_ID}/raw_materials \
 --latex_template_dir templates/cvpr2025 \
 --output_dir ./paper_output_${PAPER_ID} \
---use_plotting true \
+--use_plotting false \
 > ./paper_writing_${PAPER_ID}.log 2>&1 &
 
 

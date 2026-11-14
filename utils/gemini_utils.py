@@ -28,24 +28,10 @@ import dotenv
 dot_file = os.path.join(os.path.dirname(__file__), "../.env")
 dotenv.load_dotenv(dot_file)
 
-vertex_ai_project = os.getenv("VERTEX_AI_PROJECT")
-vertex_ai_location = os.getenv("VERTEX_AI_LOCATION")
-gemini_api_key = os.getenv("GEMINI_API_KEY")
-
-if vertex_ai_project and vertex_ai_location:
-    print(
-        f"Using Vertex AI configuration. Project: {vertex_ai_project}, Location: {vertex_ai_location}"
-    )
-    genai_client = genai.Client(
-        vertexai=True, project=vertex_ai_project, location=vertex_ai_location
-    )
-elif gemini_api_key:
-    print("Using Gemini API Key configuration.")
-    genai_client = genai.Client(api_key=gemini_api_key)
-else:
-    raise ValueError(
-        "Either VERTEX_AI_PROJECT/VERTEX_AI_LOCATION or GEMINI_API_KEY must be set."
-    )
+def _get_genai_client():
+    from utils.provider_backend import _client, validate_model_configuration
+    validate_model_configuration("gemini:legacy")
+    return _client("gemini")
 
 
 def parse_gemini_json_results(response: str):
@@ -153,7 +139,7 @@ def call_gemini_with_contents(
 
     for attempt in range(max_retries):
         try:
-            response = genai_client.models.generate_content(
+            response = _get_genai_client().models.generate_content(
                 model=model_name,
                 contents=contents,
                 config=types.GenerateContentConfig(**generation_configs),
@@ -283,7 +269,7 @@ def generate_image_with_gemini(
             }
             config_args.update(generation_configs)
 
-            response = genai_client.models.generate_content(
+            response = _get_genai_client().models.generate_content(
                 model=model_name,
                 contents=[types.Part.from_text(text=prompt)],
                 config=types.GenerateContentConfig(**config_args),

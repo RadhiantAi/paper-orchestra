@@ -17,6 +17,10 @@ import sys
 import os
 import shutil
 from datetime import datetime
+from utils.llm_backend_utils import (
+    validate_model_configuration,
+    ModelConfigurationError,
+)
 
 
 def main():
@@ -51,13 +55,13 @@ def main():
     )
     parser.add_argument(
         "--writer_model_name",
-        default="gemini-3.1-pro-preview",
-        help="LLM for writer and literature agents.",
+        default=os.getenv("PAPER_WRITER_MODEL"),
+        help="Writer model as provider:model, or PAPER_WRITER_MODEL.",
     )
     parser.add_argument(
         "--reflection_model_name",
-        default="gemini-3.1-pro-preview",
-        help="LLM for reflection agents.",
+        default=os.getenv("PAPER_REVIEW_MODEL"),
+        help="Review model as provider:model. Defaults to the writer.",
     )
     parser.add_argument(
         "--research_cutoff",
@@ -66,28 +70,37 @@ def main():
     )
     parser.add_argument(
         "--use_plotting",
-        type=lambda x: (str(x).lower() in ["true", "1", "yes"]),
+        type=lambda x: str(x).lower() in ["true", "1", "yes"],
         default=False,
-        help="Enable plotting agent workflow to generate figures from code.",
+        help="Automatic figure generation is disabled in this fork. Supply checked figures instead.",
     )
     parser.add_argument(
-        "--plotting_model_name",
-        default="gemini-3.1-pro-preview",
-        help="LLM for the plotting agent.",
+        "--search_model_name",
+        default=os.getenv("PAPER_SEARCH_MODEL"),
+        help="Model for ranking retrieved papers. Defaults to the writer.",
     )
-    parser.add_argument(
-        "--image_model_name",
-        default="gemini-3-pro-image-preview",
-        help="Vision model if required by plotting agent.",
-    )
-    parser.add_argument(
-        "--plotting_max_critic_rounds",
-        type=int,
-        default=3,
-        help="Maximum rounds of self-correction in the plotting agent.",
-    )
-
     args = parser.parse_args()
+
+    if args.use_plotting:
+        parser.error(
+            "Automatic figure generation is disabled. Supply checked figures in raw_materials/figures."
+        )
+
+    args.reflection_model_name = args.reflection_model_name or args.writer_model_name
+    args.search_model_name = args.search_model_name or args.writer_model_name
+    try:
+        for selected_model in (
+            args.writer_model_name,
+            args.reflection_model_name,
+            args.search_model_name,
+        ):
+            validate_model_configuration(selected_model)
+    except ModelConfigurationError as error:
+        parser.error(str(error))
+
+    print(
+        "DRAFT: Human review of methods, results and full-text citations is required."
+    )
 
     if args.research_cutoff is None:
         args.research_cutoff = datetime.now().strftime("%Y-%m")
@@ -134,42 +147,29 @@ def main():
             )
             print("If figures are missing, compilation may fail.")
             print(
-                f"If you don't have figures, you can use the plotting agent to generate them by running with --use_plotting."
+                "Supply checked figures and their captions before generating a manuscript that needs figures."
             )
             print("=" * 80 + "\n")
 
-    if args.use_plotting:
-        from methods.paper_writer_with_plotting import write_single_paper
+    from methods.paper_writer import write_single_paper
 
-        print(f"🚀 Starting Paper Generation (WITH PLOTTING) in {base_dir}")
-        write_single_paper(
-            base_dir=base_dir,
-            latex_template_dir=args.latex_template_dir,
-            idea_filename=args.idea_filename,
-            experimental_log_filename=args.experimental_log_filename,
-            writer_model_name=args.writer_model_name,
-            reflection_model_name=args.reflection_model_name,
-            plotting_model_name=args.plotting_model_name,
-            image_model_name=args.image_model_name,
-            research_cutoff=args.research_cutoff,
-            plotting_max_critic_rounds=args.plotting_max_critic_rounds,
-        )
-    else:
-        from methods.paper_writer import write_single_paper
+    provided_figures_dir = os.path.join(args.raw_materials_dir, "figures")
+    print(
+        f"🚀 Starting Paper Generation (WITHOUT PLOTTING), with figures stored in {provided_figures_dir}"
+    )
+    success = write_single_paper(
+        base_dir=base_dir,
+        latex_template_dir=args.latex_template_dir,
+        idea_filename=args.idea_filename,
+        experimental_log_filename=args.experimental_log_filename,
+        writer_model_name=args.writer_model_name,
+        reflection_model_name=args.reflection_model_name,
+        research_cutoff=args.research_cutoff,
+        search_model_name=args.search_model_name,
+    )
 
-        provided_figures_dir = os.path.join(args.raw_materials_dir, "figures")
-        print(
-            f"🚀 Starting Paper Generation (WITHOUT PLOTTING), with figures stored in {provided_figures_dir}"
-        )
-        write_single_paper(
-            base_dir=base_dir,
-            latex_template_dir=args.latex_template_dir,
-            idea_filename=args.idea_filename,
-            experimental_log_filename=args.experimental_log_filename,
-            writer_model_name=args.writer_model_name,
-            reflection_model_name=args.reflection_model_name,
-            research_cutoff=args.research_cutoff,
-        )
+    if not success:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

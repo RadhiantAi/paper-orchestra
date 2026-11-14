@@ -19,13 +19,38 @@ import time
 from typing import List, Dict, Union, Optional
 from thefuzz import fuzz  # type: ignore
 import datetime
+import threading
 
 from dotenv import load_dotenv  # type: ignore
 
 cur_dir = os.path.dirname(os.path.realpath(__file__))
 load_dotenv(os.path.join(cur_dir, "../.env"))
 S2_API_KEY = os.environ.get("SEMANTIC_SCHOLAR_API_KEY")
-print(f"Using S2 API Key: {S2_API_KEY}")
+_search_lock = threading.Lock()
+_last_search = 0.0
+
+
+def s2_search(query, limit=20):
+    """Retrieve candidate records without a model-provider search tool."""
+    global _last_search
+    headers = {"X-API-KEY": S2_API_KEY} if S2_API_KEY else {}
+    try:
+        with _search_lock:
+            time.sleep(max(0, 1.0 - (time.monotonic() - _last_search)))
+            try:
+                response = requests.get(
+                    "https://api.semanticscholar.org/graph/v1/paper/search",
+                    headers=headers,
+                    params={"query": query, "limit": limit,
+                            "fields": "title,authors,venue,year,abstract,citationCount,journal,publicationDate"},
+                    timeout=30,
+                )
+            finally:
+                _last_search = time.monotonic()
+        response.raise_for_status()
+        return response.json().get("data", [])
+    except Exception:
+        raise RuntimeError("Semantic Scholar search failed. Check access and rate limits.") from None
 
 
 # --- SEMANTIC SCHOLAR UTILS ---
@@ -95,6 +120,7 @@ def s2_title_search(
         if highest_ratio > 70:
             return best_match
         return None
-    except Exception as e:
-        print(f"      ⚠️ S2 Error for '{title_query}': {e}")
+    except Exception:
+        # Requests and proxy errors can contain credentials or request details.
+        print("Semantic Scholar lookup failed; reference needs manual verification.")
         return None

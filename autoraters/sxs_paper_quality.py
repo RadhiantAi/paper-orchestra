@@ -19,13 +19,12 @@ import base64
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from google.genai import types
 import pymupdf  # type: ignore
 
 from utils.pdf_utils import load_paper
+from utils.provider_backend import model_file_label
 from utils.llm_backend_utils import get_llm_parser
-from utils.gemini_utils import call_gemini_with_contents
-from utils.openai_utils import call_openai_models_with_content
+from utils.llm_backend_utils import call_llm_with_contents
 from autoraters.prompts.sxs_quality_prompts import sxs_paper_quality_system_prompt
 
 # Global lock for file writing
@@ -47,7 +46,7 @@ def get_pdf_page_images_base64(pdf_path, max_pages=None):
 
 
 def rate_sxs_paper_quality(
-    paper1_path: str, paper2_path: str, model_name: str = "gemini-3.1-pro-preview"
+    paper1_path: str, paper2_path: str, model_name: str = None
 ):
     max_retries = 5
     cur_try = 0
@@ -55,79 +54,18 @@ def rate_sxs_paper_quality(
 
     prompt_text = "Task: Compare the overall scientific contribution, technical depth, formatting, presentation, and writing quality of these two papers side by side."
 
-    is_openai = (
-        "gpt" in model_name.lower()
-        or "o1" in model_name.lower()
-        or "o3" in model_name.lower()
-    )
-
     while (not succeed) and cur_try < max_retries:
         try:
-            if is_openai:
-                # Setup OpenAI content payload
-                paper1_text = load_paper(paper1_path, min_size=100)
-                paper2_text = load_paper(paper2_path, min_size=100)
-
-                content = []
-                content.append(
-                    {"type": "text", "text": "Paper 1 Text:\n" + paper1_text}
-                )
-                content.append({"type": "text", "text": "Paper 1 Visual Pages:"})
-
-                for b64_img in get_pdf_page_images_base64(paper1_path, max_pages=15):
-                    content.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"},
-                        }
-                    )
-
-                content.append(
-                    {"type": "text", "text": "Paper 2 Text:\n" + paper2_text}
-                )
-                content.append({"type": "text", "text": "Paper 2 Visual Pages:"})
-
-                for b64_img in get_pdf_page_images_base64(paper2_path, max_pages=15):
-                    content.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"},
-                        }
-                    )
-
-                content.append({"type": "text", "text": prompt_text})
-
-                response_dict = call_openai_models_with_content(
-                    content=content,
-                    model_name=model_name,
-                    result_parsing_func=get_llm_parser(model_name, return_json=True),
-                    check_parsed_response_not_none=True,
-                    system_prompt=sxs_paper_quality_system_prompt,
-                )
-            else:
-                # Setup Gemini
-                with open(paper1_path, "rb") as f1, open(paper2_path, "rb") as f2:
-                    pdf1_bytes = f1.read()
-                    pdf2_bytes = f2.read()
-
+            with open(paper1_path, "rb") as f1, open(paper2_path, "rb") as f2:
                 contents = [
-                    types.Part.from_text(text="Paper 1:"),
-                    types.Part.from_bytes(data=pdf1_bytes, mime_type="application/pdf"),
-                    types.Part.from_text(text="\n\nPaper 2:"),
-                    types.Part.from_bytes(data=pdf2_bytes, mime_type="application/pdf"),
-                    types.Part.from_text(text="\n\n" + prompt_text),
+                    "Paper 1:", {"data": f1.read(), "mime_type": "application/pdf"},
+                    "Paper 2:", {"data": f2.read(), "mime_type": "application/pdf"},
+                    prompt_text,
                 ]
-
-                response_dict = call_gemini_with_contents(
-                    contents=contents,
-                    model_name=model_name,
-                    result_parsing_func=get_llm_parser(model_name, return_json=True),
-                    generation_configs={
-                        "temperature": 0.0,
-                        "system_instruction": sxs_paper_quality_system_prompt,
-                    },
-                    check_parsed_response_not_none=True,
-                )
+            response_dict = call_llm_with_contents(
+                contents=contents, model_name=model_name,
+                generation_configs={"system_instruction": sxs_paper_quality_system_prompt},
+            )
 
             succeed = True
             return (
@@ -243,7 +181,7 @@ def perform_sxs_paper_quality_batch(
     exp1_name: str,
     exp2_name: str,
     output_folder: str = "./logs/sxs_paper_quality",
-    model_name: str = "gemini-3.1-pro-preview",
+    model_name: str = None,
 ):
     print(f"Starting Enhanced SxS Paper Quality batch execution...", flush=True)
     print(f"Project 1: {project_folder_1} ({rel_path_1})", flush=True)
@@ -259,7 +197,7 @@ def perform_sxs_paper_quality_batch(
 
     output_json_path = os.path.join(
         output_folder,
-        f"sxs_paper_quality_enhanced_{model_name}_{exp1_name}_vs_{exp2_name}_{conference}.json",
+        f"sxs_paper_quality_enhanced_{model_file_label(model_name)}_{exp1_name}_vs_{exp2_name}_{conference}.json",
     )
 
     current_results = {}

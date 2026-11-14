@@ -2,6 +2,8 @@
 
 This directory contains the Streamlit frontend for Paper Orchestra.
 
+This fork accepts separate writer, review and literature-ranking models. Configure credentials in `.env` as described in [FORK_NOTES.md](../FORK_NOTES.md). Supply checked figures. Email delivery and automatic figure generation are disabled. PDFs are drafts for human review.
+
 ## How to Launch the Demo Locally
 
 1. Ensure you have activated your environment and installed dependencies.
@@ -38,3 +40,5 @@ And then kill it:
 ```bash
 kill <PID>
 ```
+
+On Windows, the worker starts without a visible console. Automatic child-process cleanup is Linux-specific; keep the terminal open until the run ends.

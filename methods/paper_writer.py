@@ -20,6 +20,7 @@ import json
 import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+from utils.llm_backend_utils import validate_model_configuration
 from methods.agents.outline_agent import OutlineAgent
 from methods.agents.literature_review_agent import HybridLiteratureAgent
 from methods.agents.section_writing_agent import SectionWritingAgent
@@ -35,10 +36,16 @@ def write_single_paper(
     latex_template_dir,
     idea_filename="idea_dense.md",
     experimental_log_filename="experimental_log.md",
-    writer_model_name: str = "gemini-3.1-pro-preview",
-    reflection_model_name: str = "gemini-3.1-pro-preview",
+    writer_model_name: str = None,
+    reflection_model_name: str = None,
     research_cutoff: str = "2024-11",
+    search_model_name: str = None,
 ):
+    writer_model_name = writer_model_name or os.getenv("PAPER_WRITER_MODEL")
+    reflection_model_name = reflection_model_name or os.getenv("PAPER_REVIEW_MODEL") or writer_model_name
+    search_model_name = search_model_name or os.getenv("PAPER_SEARCH_MODEL") or writer_model_name
+    for selected_model in (writer_model_name, reflection_model_name, search_model_name):
+        validate_model_configuration(selected_model)
     latex_writeup_dir = osp.join(base_dir, "latex_writeup")
     pdf_file = osp.join(base_dir, "final_paper.pdf")
 
@@ -113,6 +120,7 @@ def write_single_paper(
                 output_dir=literature_agent_output_dir,
                 model_name=writer_model_name,
                 max_workers=3,
+                search_model_name=search_model_name,
             )
             literature_agent.run(
                 outline_path=outline_file_path,
@@ -366,7 +374,7 @@ def run_batch_writeup(
     date_str: str = "",
     idea_filename: str = "idea_sparse.md",
     experimental_log_filename: str = "experimental_log.md",
-    writer_model_name: str = "gemini-3.1-pro-preview",
+    writer_model_name: str = None,
     research_cutoff: str = "2024-11",
     n_papers=-1,
     max_workers=4,

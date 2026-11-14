@@ -26,6 +26,7 @@ import pymupdf  # type: ignore
 import numpy as np
 import cv2
 from pypdf import PdfReader  # type: ignore
+from utils.draft_output import mark_pdf_as_draft
 
 
 def load_paper(pdf_path, num_pages=None, min_size=100):
@@ -219,6 +220,8 @@ def compile_latex(cwd, pdf_file, texfile_name="template", timeout=30):
     )
 
     if os.path.exists(source_pdf) and not has_timeout:
+        # A failed label operation must not publish an unmarked PDF.
+        mark_pdf_as_draft(source_pdf)
         try:
             shutil.move(source_pdf, pdf_file)
         except Exception:

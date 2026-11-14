@@ -18,11 +18,6 @@ import json
 import sys
 import time
 import threading
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
 from dotenv import load_dotenv
 import subprocess
 import shutil
@@ -33,7 +28,6 @@ import zipfile
 from streamlit.runtime.scriptrunner import add_script_run_ctx
 import signal
 import ctypes
-from frontend_utils import send_notification_email
 
 load_dotenv()
 
@@ -41,6 +35,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from methods.paper_writer import write_single_paper
 from utils.pdf_utils import pdf_to_grid_images
+from utils.llm_backend_utils import validate_model_configuration, ModelConfigurationError
 
 st.set_page_config(
     page_title="Paper Orchestra - AI Paper Writer",
@@ -142,9 +137,15 @@ def render_sidebar():
         except Exception as exception_object:
             st.sidebar.error(f"Error loading example: {exception_object}")
 
-    models = ["gemini-3.1-pro-preview", "gemini-3-flash-preview"]
-    selected_model = st.sidebar.selectbox(
-        "Select Model", models, disabled=st.session_state.locked
+    st.sidebar.caption("Model names use provider:model. Providers: openai, anthropic, gemini or compatible.")
+    selected_model = st.sidebar.text_input(
+        "Writer model", value=os.getenv("PAPER_WRITER_MODEL", ""), disabled=st.session_state.locked
+    )
+    review_model = st.sidebar.text_input(
+        "Review model (blank uses writer)", value=os.getenv("PAPER_REVIEW_MODEL", ""), disabled=st.session_state.locked
+    )
+    search_model = st.sidebar.text_input(
+        "Literature ranking model (blank uses writer)", value=os.getenv("PAPER_SEARCH_MODEL", ""), disabled=st.session_state.locked
     )
 
     templates = ["cvpr2025", "iclr2025"]
@@ -152,39 +153,21 @@ def render_sidebar():
         "Select Template", templates, disabled=st.session_state.locked
     )
 
-    plotting_options = ["Yes", "No"]
+    plotting_options = ["No"]
     enable_plotting = st.sidebar.selectbox(
         "Enable Figure Generation",
         plotting_options,
         index=0,
-        disabled=st.session_state.locked,
+        disabled=True,
     )
+    st.sidebar.caption("Upload checked figures. Automatic figure generation is disabled.")
+    st.sidebar.caption("Download drafts for review. Email delivery is disabled.")
+    email_input = ""
 
-    st.sidebar.markdown(
-        "Your Email (for notification) <span style='color:red'>*</span>",
-        unsafe_allow_html=True,
-    )
-    email_input = st.sidebar.text_input(
-        "Email",
-        key="email_input",
-        label_visibility="collapsed",
-        disabled=st.session_state.locked,
-    )
-
-    if st.sidebar.button("Confirm Email", disabled=st.session_state.locked):
-        if st.session_state.get("email_input"):
-            st.session_state.email_confirmed = True
-        else:
-            st.session_state.email_confirmed = False
-            st.sidebar.warning("⚠️ Please enter an email address first.")
-
-    if st.session_state.get("email_confirmed"):
-        st.sidebar.success("📧 Email confirmed successfully!")
-
-    return selected_model, selected_template, enable_plotting, email_input
+    return selected_model, selected_template, enable_plotting, email_input, review_model, search_model
 
 
-selected_model, selected_template, enable_plotting, email_input = render_sidebar()
+selected_model, selected_template, enable_plotting, email_input, review_model, search_model = render_sidebar()
 
 # ------------------------------------------------------------------------
 # UI COMPONENT FUNCTIONS
@@ -300,7 +283,7 @@ def render_pdf_and_snapshots(pdf_path, snapshots_directory, download_key):
 
 
 def handle_live_execution(
-    steps, email_input, selected_template, selected_model, enable_plotting
+    steps, email_input, selected_template, selected_model, enable_plotting, review_model, search_model
 ):
     if st.session_state.running:
 
@@ -308,10 +291,9 @@ def handle_live_execution(
             if (
                 not st.session_state.get("saved_idea")
                 or not st.session_state.get("saved_log")
-                or not st.session_state.get("email_input")
             ):
                 st.session_state.error_message = (
-                    "❌ Please fill in all required fields (Idea, Log, and Email)."
+                    "Please provide a research idea and experimental log."
                 )
                 st.session_state.running = False
                 st.session_state.locked = False
@@ -348,7 +330,9 @@ def handle_live_execution(
                 "--writer_model_name",
                 selected_model,
                 "--reflection_model_name",
-                selected_model,
+                review_model or selected_model,
+                "--search_model_name",
+                search_model or selected_model,
                 "--idea_filename",
                 "idea_sparse.md",
                 "--experimental_log_filename",
@@ -376,11 +360,16 @@ def handle_live_execution(
                 figures_list,
             ):
                 try:
-                    libc = ctypes.CDLL(None)
-                    process_set_parent_death_signal = 1
+                    process_options = {}
+                    if sys.platform == "linux":
+                        libc = ctypes.CDLL(None)
 
-                    def set_death_signal():
-                        libc.prctl(process_set_parent_death_signal, signal.SIGKILL)
+                        def set_death_signal():
+                            libc.prctl(1, signal.SIGKILL)
+
+                        process_options["preexec_fn"] = set_death_signal
+                    elif os.name == "nt":
+                        process_options["creationflags"] = subprocess.CREATE_NO_WINDOW
 
                     os.makedirs(run_directory, exist_ok=True)
                     raw_materials_directory = os.path.join(
@@ -410,13 +399,19 @@ def handle_live_execution(
                             with open(figure_path, "wb") as file_object:
                                 file_object.write(figure["file"].getvalue())
 
+                    with open(os.path.join(figures_directory, "info.json"), "w", encoding="utf-8") as file_object:
+                        json.dump([
+                            {"name": figure["name"], "caption": figure["caption"]}
+                            for figure in figures_list
+                        ], file_object, indent=2)
+
                     process = subprocess.Popen(
                         execution_command,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         text=True,
                         cwd=working_directory,
-                        preexec_fn=set_death_signal,
+                        **process_options,
                     )
 
                     current_step_name = steps_list[0]
@@ -456,68 +451,6 @@ def handle_live_execution(
 
                     if process.poll() == 0:
                         st.session_state.current_step = len(steps_list)
-                        if recipient_email:
-                            attachments = []
-                            run_dir = st.session_state.run_directory
-
-                            # 1. Final PDF
-                            final_pdf = os.path.join(run_dir, "final_paper.pdf")
-                            if os.path.exists(final_pdf):
-                                attachments.append(final_pdf)
-
-                            # 2. LaTeX Zip
-                            latex_writeup = os.path.join(run_dir, "latex_writeup")
-                            final_tex = os.path.join(
-                                run_dir,
-                                "content_refinement_workdir",
-                                "final_refined_paper.tex",
-                            )
-
-                            if os.path.exists(latex_writeup) and os.path.exists(
-                                final_tex
-                            ):
-                                try:
-                                    with tempfile.TemporaryDirectory() as tmp_dir:
-                                        zip_source_dir = os.path.join(
-                                            tmp_dir, "latex_source"
-                                        )
-                                        shutil.copytree(latex_writeup, zip_source_dir)
-
-                                        for f_name in [
-                                            "template.tex",
-                                            "raw_draft_paper.tex",
-                                        ]:
-                                            f_path = os.path.join(
-                                                zip_source_dir, f_name
-                                            )
-                                            if os.path.exists(f_path):
-                                                os.remove(f_path)
-
-                                        shutil.copy(
-                                            final_tex,
-                                            os.path.join(zip_source_dir, "main.tex"),
-                                        )
-
-                                        zip_output_base = os.path.join(
-                                            run_dir, "latex_source"
-                                        )
-                                        shutil.make_archive(
-                                            zip_output_base, "zip", zip_source_dir
-                                        )
-
-                                        if os.path.exists(zip_output_base + ".zip"):
-                                            attachments.append(zip_output_base + ".zip")
-                                except Exception as e:
-                                    print(f" >> Error preparing latex zip: {e}")
-                                    st.session_state.logs[
-                                        "Content Refinement"
-                                    ] += f"\n❌ Error preparing latex zip: {e}"
-
-                            send_notification_email(
-                                recipient_email,
-                                "Generated Paper",
-                                attachments=attachments,
-                            )
                 except Exception as exception_object:
                     st.session_state.logs[
                         "Content Refinement"
@@ -551,6 +484,7 @@ def handle_live_execution(
 # ------------------------------------------------------------------------
 
 st.title("🎻 Paper Orchestra Demo")
+st.warning("Drafts require human review of methods, results and full-text citations. Use public or synthetic material for the initial trial.")
 st.markdown(
     "Demonstrating the automated paper writing process as detailed in [PaperOrchestra](https://arxiv.org/abs/2604.05018)."
 )
@@ -705,6 +639,12 @@ if not st.session_state.get("hide_inputs"):
         if st.button(
             "🚀 Begin Writing", type="primary", disabled=st.session_state.locked
         ):
+            try:
+                for chosen_model in (selected_model, review_model or selected_model, search_model or selected_model):
+                    validate_model_configuration(chosen_model)
+            except ModelConfigurationError as error:
+                st.error(str(error))
+                st.stop()
             st.session_state.saved_idea = st.session_state.get("idea_text_main")
             st.session_state.saved_log = st.session_state.get("log_text_main")
             st.session_state.locked = True
@@ -812,7 +752,7 @@ else:
                     with open(pdf_path, "rb") as file_object:
                         with column_download_1:
                             st.download_button(
-                                label="📄 Download Final PDF",
+                                label="📄 Download Draft PDF",
                                 data=file_object.read(),
                                 file_name="final_paper.pdf",
                                 mime="application/pdf",
@@ -1078,5 +1018,5 @@ else:
                 st.info("No refinement progress available yet.")
 
     handle_live_execution(
-        steps, email_input, selected_template, selected_model, enable_plotting
+        steps, email_input, selected_template, selected_model, enable_plotting, review_model, search_model
     )

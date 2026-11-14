@@ -20,13 +20,13 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Dict
 from pydantic import BaseModel
-from google.genai import types  # type: ignore
 
 from methods.prompts.literature_review_agent import (
     literature_review_agent_writter_prompt,
 )
-from utils.gemini_utils import call_gemini_with_contents, parse_gemini_latex_results
-from utils.scholar_utils import s2_title_search
+from utils.llm_backend_utils import call_llm_with_contents
+from utils.response_parsing import parse_latex_results
+from utils.scholar_utils import s2_title_search, s2_search
 
 
 class CandidatePaper(BaseModel):
@@ -69,13 +69,15 @@ class HybridLiteratureAgent:
         latex_template_path: str,
         conference_guidelines_path: str,
         output_dir: str,
-        model_name: str = "gemini-3.1-pro-preview",
+        model_name: str = None,
         max_workers: int = 5,
+        search_model_name: str = None,
     ):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
 
         self.model_name = model_name
+        self.search_model_name = search_model_name or os.getenv("PAPER_SEARCH_MODEL") or model_name
         self.max_workers = max_workers
         self.context_paths = {
             "idea.md": idea_path,
@@ -84,7 +86,6 @@ class HybridLiteratureAgent:
             "conference_guidelines.md": conference_guidelines_path,
         }
         self.context_files = self._load_context_files()
-        self.google_search_tool = types.Tool(google_search=types.GoogleSearch())
 
         self.registry_lock = threading.Lock()
         self.print_lock = threading.Lock()
@@ -124,6 +125,9 @@ class HybridLiteratureAgent:
         self._execute_tasks_in_parallel(
             search_tasks, outline, unique_papers_registry, processed_tasks, cutoff_date
         )
+
+        if not unique_papers_registry:
+            raise RuntimeError("No references with abstracts were verified. Review the search before drafting.")
 
         self._safe_print(
             f"\n✨ Final Count: {len(unique_papers_registry)} unique enriched papers retrieved."
@@ -172,13 +176,13 @@ class HybridLiteratureAgent:
         if not active_tasks:
             return
 
-        self._safe_print(f"   🔎 Phase 1a: Google Candidates Discovery (MaxPool=10)...")
+        self._safe_print(f"   🔎 Phase 1a: Semantic Scholar Candidate Discovery (MaxPool=10)...")
         all_candidates_with_tasks = []
 
-        with ThreadPoolExecutor(max_workers=10) as executor:  # Fast for Google Search!
+        with ThreadPoolExecutor(max_workers=10) as executor:  # Fast for Candidate ranking
             future_to_task = {
                 executor.submit(
-                    self._process_search_task_google, task, outline, cutoff_date
+                    self._process_search_task, task, outline, cutoff_date
                 ): task
                 for task in active_tasks
             }
@@ -192,9 +196,7 @@ class HybridLiteratureAgent:
                                 {"cand": cand_item, "task": task}
                             )
                 except Exception as exc:
-                    self._safe_print(
-                        f"      ❌ Google Search failed for '{task['focus'][:20]}...': {exc}"
-                    )
+                    raise RuntimeError("Literature discovery failed; review search access before drafting.") from None
 
         self._safe_print(
             f"   📊 Phase 1b: Semantic Scholar Enrichment (Rate-limited, sequential)..."
@@ -302,7 +304,7 @@ class HybridLiteratureAgent:
 
         return outline
 
-    def _process_search_task_google(self, task, outline, cutoff_date) -> list:
+    def _process_search_task(self, task, outline, cutoff_date) -> list:
         if task.get("search_type") == "targeted":
             self._safe_print(
                 f"   🎯 Targeted Search [{task['section']}]: '{task['focus']}'"
@@ -315,13 +317,10 @@ class HybridLiteratureAgent:
         retry_count = 0
         while retry_count < 3:
             try:
-                candidates = self._discover_candidates(task, outline, cutoff_date)
-                if candidates:
-                    return candidates
-                retry_count += 1
+                return self._discover_candidates(task, outline, cutoff_date)
             except Exception as e:
                 retry_count += 1
-        return []
+        raise RuntimeError("Literature discovery failed after three attempts.")
 
     def _enrich_and_register_paper(self, cand, task, registry, cutoff_date):
         cand_title = getattr(cand, "title", None) or cand.get("title")
@@ -424,55 +423,29 @@ class HybridLiteratureAgent:
         return True
 
     def _discover_candidates(self, task, outline, cutoff_date) -> List[CandidatePaper]:
-        intro_plan = outline.get("intro_related_work_plan", {}).get(
-            "introduction_strategy", {}
+        records = [p for p in s2_search(task["focus"])
+                   if p.get("title") and p.get("abstract") and self._is_paper_allowed(p, cutoff_date)]
+        if not records:
+            return []
+        candidates = [
+            {"id": index, "title": p["title"], "year": p.get("year"), "abstract": p["abstract"]}
+            for index, p in enumerate(records)
+        ]
+        prompt = (
+            "Select relevant papers only from the candidate records below. "
+            "Return JSON {\"selected_ids\": [integer IDs]}. "
+            "Use an empty list if none are relevant. Do not invent IDs or paper details.\n"
+            + json.dumps({"task": task, "candidates": candidates})
         )
-        core_problem = intro_plan.get("problem_gap_hypothesis", "N/A")
-
-        if task.get("search_type") == "targeted":
-            prompt = f"""
-            Identify the SPECIFIC academic paper described by this hint: "{task['focus']}".
-            
-            CONTEXT: {task['context']}
-            CUTOFF DATE: Published BEFORE {cutoff_date}
-            
-            INSTRUCTIONS:
-            1. Use Google Search to find the EXACT title and year of this paper.
-            2. If the hint refers to a dataset, model architecture, or baseline (e.g., "research paper introducing..."), you MUST find the primary, original paper that introduced it.
-            3. Return EXACTLY 1 candidate paper that matches best.
-
-            YOU MUST return the results in json format (```json content```) following this schema:
-            {DiscoveryResult.model_json_schema()}
-            """
-        else:
-            prompt = f"""
-            Find 10-15 highly relevant, influential academic papers matching the search task. Do not force results; only return strictly relevant papers.
-            
-            SEARCH TASK: {task['focus']}
-            CONTEXT FOR TASK: {task['context']}
-            BROADER PROJECT PROBLEM: {core_problem}
-            CUTOFF DATE: Published BEFORE {cutoff_date}
-            
-            INSTRUCTIONS:
-            1. Use Google Search to find REAL papers (ArXiv, CVPR, NeurIPS, ICML, ICLR, etc.).
-            2. Only return papers published in top-tier conferences or journals, or highly-cited works, or the exact state-of-the-art relevant to the task.
-
-            YOU MUST return the results in json format (```json content```) following this schema:
-            {DiscoveryResult.model_json_schema()}
-            """
-
-        response_dict = call_gemini_with_contents(
-            model_name="gemini-3-flash-preview",
-            contents=[prompt],
-            generation_configs={
-                "tools": [self.google_search_tool],
-                "temperature": 0.1 if task.get("search_type") == "targeted" else 0.4,
-            },
-        )
-
-        if response_dict["parsed_response"]:
-            return response_dict["parsed_response"].get("candidates", [])
-        return []
+        response = call_llm_with_contents([prompt], model_name=self.search_model_name)
+        selected = response["parsed_response"].get("selected_ids")
+        if not isinstance(selected, list) or any(type(i) is not int or i < 0 or i >= len(records) for i in selected):
+            raise ValueError("Literature selection contained invalid candidate IDs.")
+        return [
+            {"title": records[i]["title"], "year": records[i].get("year"),
+             "reason": "Selected from retrieved Semantic Scholar records."}
+            for i in dict.fromkeys(selected)
+        ]
 
     def _synthesize_content(self, outline, papers: List[PaperData], cutoff_date: str):
         paper_keys = [p.citation_key for p in papers]
@@ -496,11 +469,11 @@ class HybridLiteratureAgent:
         )
 
         user_prompt = "Generate the LaTeX for Introduction and Related Work sections."
-        response_dict = call_gemini_with_contents(
+        response_dict = call_llm_with_contents(
             model_name=self.model_name,
             contents=[user_prompt, json.dumps(context_payload)],
             generation_configs={"system_instruction": writer_system_prompt},
-            result_parsing_func=parse_gemini_latex_results,
+            result_parsing_func=parse_latex_results,
         )
         return response_dict["parsed_response"]
 
