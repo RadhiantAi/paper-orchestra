@@ -156,11 +156,15 @@ def compile_latex(cwd, pdf_file, texfile_name="template", timeout=60):
             pdf = work / f"{texfile_name}.pdf"
             if not pdf.is_file():
                 raise CompilationError("TeX produced no PDF.")
-            mark_pdf_as_draft(pdf)
+            # Container outputs belong to its unprivileged UID on Linux. Create a
+            # host-owned copy for labelling instead of relaxing container privileges.
+            labelled_pdf = work / ("labelled-" + uuid.uuid4().hex + ".pdf")
+            shutil.copyfile(pdf, labelled_pdf)
+            mark_pdf_as_draft(labelled_pdf)
             target = Path(pdf_file)
             target.parent.mkdir(parents=True, exist_ok=True)
             staged = target.with_suffix(".pdf.tmp")
-            shutil.copy2(pdf, staged)
+            shutil.copy2(labelled_pdf, staged)
             staged.replace(target)
         finally:
             Path(cwd, "compilation_report.json").write_text(
