@@ -15,6 +15,20 @@ def test_strict_trial_and_legacy_controls_are_available_offline(tmp_path):
     next(x for x in app.button if x.label == "Enable strict mode on this new project").click().run()
     assert not app.exception
     assert load_project(tmp_path)["strict_trial"]["enabled"]
+    assert any(x.label == "Freeze protocol and admitted inputs" for x in app.button)
+
+
+def test_plot_and_human_review_controls_preserve_unresolved_default(tmp_path):
+    from tests.test_trial_evaluation import plot_ready
+    w, _, _, _ = plot_ready(tmp_path)
+    app = AppTest.from_string(
+        "from frontend.project_review import render_project\nrender_project(" + repr(str(w)) + ")"
+    ).run(timeout=30)
+    assert not app.exception
+    next(x for x in app.selectbox if x.label == "Human check type").select("calculation_interpretation").run()
+    assert not app.exception
+    assert next(x for x in app.selectbox if x.label == "Human check decision").value == "unresolved"
+    assert any(x.label == "Generate checked statistical figure" for x in app.button)
 
 
 def test_project_queries_are_recorded_without_clearing_conditions(tmp_path):

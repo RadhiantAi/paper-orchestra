@@ -18,6 +18,9 @@ def source_recovery(workspace, data):
     from utils.source_structure import inspect_structure, allocate_source, ROLES, allocation_findings
     from frontend.trial_controls import intake_controls
     intake_controls(workspace, data)
+    from frontend.evaluation_controls import reviewer_controls, trial_controls
+    reviewer_controls(workspace, data)
+    trial_controls(workspace, data)
     with st.expander("Review workbook structure before choosing trial sources"):
         st.caption("Inspect occupancy and cell types without displaying values. Keep withheld originals outside this project. Structural clues do not prove a source is primary data.")
         path = st.text_input("Original source path outside the project")
@@ -90,6 +93,8 @@ def analysis_screen(workspace, data):
     from utils.analysis_recipes import run_recipe, register_proportions
     from frontend.trial_controls import continuous_controls
     continuous_controls(workspace, data)
+    from frontend.evaluation_controls import plot_controls
+    plot_controls(workspace, data)
 
     with st.expander("Run a reproducible analysis"):
         st.caption(

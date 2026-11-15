@@ -173,6 +173,9 @@ def calculate(recipe, rows):
 
 
 def run_recipe(workspace, recipe, source, output, reviewer, reason):
+    from utils.trial_evaluation import check_recipe
+    from utils.project_store import load_project
+    check_recipe(load_project(workspace), recipe)
     from utils.strict_trial import admit_file
     admit_file(workspace, source)
     if not reviewer.strip() or not reason.strip():

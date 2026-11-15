@@ -345,6 +345,8 @@ def prepare_pack(workspace, spec, output, libreoffice=None):
             dst = output / f["name"]
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(f["path"], dst)
+        from utils.continuous_figures import copy_figures
+        copy_figures(data, spec.get("continuous_figures", []), output)
         if spec.get("apply_reviews", True):
             for f in spec["files"]:
                 if f.get("preserve") or Path(f["name"]).suffix.lower() != ".docx":
@@ -526,6 +528,8 @@ def check_pack(workspace, directory):
     from utils.continuous_results import audit_continuous
     continuous_audit = audit_continuous(data, {**text_by_role, **text_by_document}, spec.get("continuous_mappings", []))
     problems.extend(continuous_audit["findings"])
+    from utils.continuous_figures import audit_figures
+    problems.extend(audit_figures(data, spec.get("continuous_figures", []), directory))
     from utils.manuscript_completeness import audit_completeness
     from utils.source_structure import allocation_findings
     completeness = audit_completeness(manuscript, spec.get("manuscript_expectations"))
@@ -704,6 +708,7 @@ def check_pack(workspace, directory):
     if coverage["status"] == "not_checked":
         pending.append({"kind": "discussion_coverage_not_checked"})
     latest_searches = {}
+    from utils.reviewer_checks import source_incomplete, review_status
     for search in data["searches"]:
         key = fingerprint(
             {
@@ -726,7 +731,7 @@ def check_pack(workspace, directory):
         )
         or s.get("status") in {"partial", "failed"}
         for s in latest_searches.values()
-    ) or any(s["status"] in {"partial", "unreadable"} for s in data["sources"]):
+    ) or any(source_incomplete(data, s) for s in data["sources"]):
         pending.append({"kind": "incomplete_source_coverage"})
     if not data["sources"]:
         pending.append({"kind": "source_coverage_not_checked"})
@@ -737,7 +742,7 @@ def check_pack(workspace, directory):
             (problems if calc.get("kind") == "local_recipe" else pending).append(
                 {"kind": "calculation_not_reproduced", "id": calc["id"]}
             )
-        elif json.loads(Path(calc["output"]["path"]).read_text()).get("warnings"):
+        elif json.loads(Path(calc["output"]["path"]).read_text()).get("warnings") and review_status(data, "calculation_interpretation", calc["id"], manuscript) != "accepted":
             pending.append(
                 {"kind": "calculation_interpretation_needs_review", "id": calc["id"]}
             )

@@ -20,6 +20,10 @@ explicit document history. These checks also work entirely offline.
 allocation, continuous-measurement analysis, per-document panel locations and
 explicit manuscript completeness expectations.
 
+[Trial evaluation and reviewer decisions](docs/trial-evaluation.md) adds evidence-bound
+workbook and interpretation reviews, frozen protocols and candidate packs, explicit
+reference unblinding, comparison reports and calculation-linked statistical figures.
+
 [REVIEW_WORKBENCH.md](REVIEW_WORKBENCH.md) covers the complete local review screen,
 OCR, reproducible aggregate analyses and journal checks. Networking is **offline by
 default**. An authorised live run must explicitly set `PAPER_NETWORK_MODE=online`;

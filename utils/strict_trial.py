@@ -55,6 +55,12 @@ def admit(data, sha256, *, path=None, origin=None):
         return
     if not re.fullmatch(r"[a-f0-9]{64}", sha256 or ""):
         raise ValueError("Strict trial admission requires an exact SHA256.")
+    if data.get("trial_protocol") and not (origin or "").startswith("host-exchange:"):
+        from utils.trial_evaluation import validate_protocol
+        protocol = validate_protocol(data)
+        permitted = {r["sha256"] for r in protocol["inputs"]} | {r["sha256"] for r in data.get("trial_artifacts", [])}
+        if sha256 not in permitted:
+            raise ValueError("Input was not admitted in the frozen trial protocol.")
     allocations = data.get("source_allocations", [])
     matched = [
         a
@@ -159,6 +165,9 @@ def record_allocation_change(data, row):
     from utils.project_recovery import _receipts
 
     sha = row["source"]["sha256"]
+    if data.get("trial_protocol") and row["role"] == "trial_input" and not row["source"].get("origin", "").startswith("host-exchange:"):
+        if sha not in {r["sha256"] for r in data["trial_protocol"]["inputs"]}:
+            raise ValueError("New inputs and unblinding require a separate trial or the explicit frozen-candidate unblind operation.")
     exposed = any(r.get("sha256") == sha for r in _receipts(data)) or any(
         event.get("payload_fingerprint") == sha for event in data.get("events", [])
     )

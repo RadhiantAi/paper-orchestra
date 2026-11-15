@@ -42,6 +42,30 @@ def main(argv=None):
     p.add_argument("--workspace", required=True)
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
+    a = sub.add_parser("review-check")
+    a.add_argument("kind", choices=["workbook_visual", "calculation_interpretation"])
+    a.add_argument("target")
+    a.add_argument("checks", help="JSON object with each required checkbox explicitly recorded")
+    a.add_argument("--decision", required=True, choices=["accepted", "unresolved"])
+    a.add_argument("--manuscript")
+    a.add_argument("--quote")
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
+    for command, field in [("trial-protocol", "protocol"), ("trial-draft", "draft"), ("trial-freeze", "directory")]:
+        a = sub.add_parser(command)
+        a.add_argument(field)
+        a.add_argument("--reviewer", required=True)
+        a.add_argument("--reason", required=True)
+    a = sub.add_parser("trial-unblind")
+    a.add_argument("--hashes", nargs="+", required=True)
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
+    a = sub.add_parser("trial-compare")
+    a.add_argument("reference")
+    a.add_argument("--output", required=True)
+    a = sub.add_parser("continuous-figure")
+    a.add_argument("spec")
+    a.add_argument("--output", required=True)
     a = sub.add_parser("strict-trial")
     a.add_argument("--reviewer", required=True)
     a.add_argument("--reason", required=True)
@@ -248,6 +272,34 @@ def main(argv=None):
     if c == "init":
         create_project(w)
         result = {"status": "created"}
+    elif c == "review-check":
+        from utils.reviewer_checks import review_check
+        review_check(w, args.kind, args.target, args.reviewer, args.reason, args.decision, read(args.checks), args.manuscript, args.quote)
+        result = {"status": "human_check_recorded", "author_approval": False}
+    elif c == "trial-protocol":
+        from utils.trial_evaluation import freeze_protocol
+        freeze_protocol(w, read(args.protocol), args.reviewer, args.reason)
+        result = {"status": "protocol_frozen"}
+    elif c == "trial-draft":
+        from utils.trial_evaluation import register_draft
+        register_draft(w, args.draft, args.reviewer, args.reason)
+        result = {"status": "operator_draft_declaration_recorded"}
+    elif c == "trial-freeze":
+        from utils.trial_evaluation import freeze_candidate
+        freeze_candidate(w, args.directory, args.reviewer, args.reason)
+        result = {"status": "candidate_frozen_not_author_approved"}
+    elif c == "trial-unblind":
+        from utils.trial_evaluation import unblind
+        unblind(w, args.hashes, args.reviewer, args.reason)
+        result = {"status": "explicit_unblinding_recorded"}
+    elif c == "trial-compare":
+        from utils.trial_evaluation import compare_reference
+        report = compare_reference(w, args.reference, args.output)
+        result = {"status": report["status"], "scope": report["scope"]}
+    elif c == "continuous-figure":
+        from utils.continuous_figures import export_continuous_figure
+        row = export_continuous_figure(w, read(args.spec), args.output)
+        result = {"status": "figure_exported_not_author_approved", "id": row["id"]}
     elif c == "strict-trial":
         from utils.strict_trial import enable_strict_trial
         enable_strict_trial(w, args.reviewer, args.reason)
