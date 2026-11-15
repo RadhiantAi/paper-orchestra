@@ -31,14 +31,26 @@ def coauthor_screen(workspace, data):
                 "First or independent round" if k is None else issued[k]["label"]
             ),
         )
-        round_reviewer = st.text_input("New round reviewer", disabled=parent is None)
-        round_reason = st.text_area(
-            "Why this starts a new round", disabled=parent is None
+        provenance = st.selectbox(
+            "Baseline origin",
+            ["unknown", "confirmed_issued", "reconstructed", "working_draft"],
         )
+        evidence_file = st.text_input(
+            "Baseline supporting sent record or tracked return"
+        )
+        round_reviewer = st.text_input("New round reviewer")
+        round_reason = st.text_area("Why this starts a new round")
         if st.button("Register issued version"):
             action(
                 lambda: register_issued(
-                    workspace, manuscript, label, parent, round_reviewer, round_reason
+                    workspace,
+                    manuscript,
+                    label,
+                    parent,
+                    round_reviewer,
+                    round_reason,
+                    provenance=provenance,
+                    evidence_file=evidence_file or None,
                 )
             )
     if not issued:
@@ -46,6 +58,29 @@ def coauthor_screen(workspace, data):
     iid = st.selectbox(
         "Issued version", list(issued), format_func=lambda k: issued[k]["label"]
     )
+    from utils.version_provenance import provenance_status
+
+    st.info(
+        "Baseline origin: "
+        + provenance_status(issued[iid]).replace("_", " ")
+        + ". A matching original-text view does not establish issuance or author approval."
+    )
+    with st.expander("Clarify this baseline's history"):
+        from utils.version_provenance import set_baseline_provenance
+
+        kind = st.selectbox(
+            "Recorded baseline origin",
+            ["unknown", "confirmed_issued", "reconstructed", "working_draft"],
+        )
+        evidence = st.text_input("Evidence for this baseline's origin")
+        who = st.text_input("Baseline history reviewer")
+        why = st.text_area("Reason for this baseline classification")
+        if st.button("Update baseline history"):
+            action(
+                lambda: set_baseline_provenance(
+                    workspace, iid, kind, who, why, evidence or None
+                )
+            )
     st.caption(
         "Round "
         + str(issued[iid].get("round", 1))

@@ -1,0 +1,8 @@
+{
+  "id": "specificity-ranking",
+  "kind": "ranking",
+  "quote": "Group B had the highest specificity.",
+  "result_id": "group-b-specificity",
+  "result_ids": ["group-a-specificity", "group-b-specificity"],
+  "direction": "highest"
+}

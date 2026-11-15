@@ -489,6 +489,11 @@ def check_pack(workspace, directory):
                         )
                         break
     manuscript = text_by_role.get("manuscript", "")
+    from utils.manuscript_consistency import audit_consistency
+
+    consistency = audit_consistency(data, manuscript)
+    for finding in consistency["findings"]:
+        (problems if finding["severity"] == "error" else pending).append(finding)
     if data["results"]:
         audit = audit_occurrences(
             manuscript, data["results"], spec.get("result_mappings", [])
@@ -723,6 +728,7 @@ def check_pack(workspace, directory):
         "problems": problems,
         "pending": pending,
         "numeric_status": audit["status"],
+        "consistency": consistency,
         "coverage": coverage,
         "journal": journal_report,
     }
