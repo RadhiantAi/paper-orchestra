@@ -22,6 +22,8 @@
 - Restore rejects duplicate/unsafe destinations, unsupported schemas, extra members,
   corrupt hashes, expansion-budget violations and Windows reserved filenames.
 - Interrupted restore leaves no partially restored project at the requested path.
+- External Windows filenames are parsed consistently on Linux, including files
+  without extensions under parent folders containing dots.
 - Missing input files make a backup incomplete; the CLI returns a non-zero exit.
 - Restored OCR review remains pending and location-bound evidence needs fresh checks.
 - Untracked returns cannot silently establish a verified baseline. Structured Word
@@ -38,11 +40,13 @@
 
 ## Local evidence
 
-- Full offline suite with real LibreOffice enabled: **197 passed, 2 skipped**.
+- Full offline suite with real LibreOffice enabled before the final portable-name
+  regression was added: **199 passed, 2 skipped**.
   The two skips were the dedicated Docker/TeX and Tesseract integration tests.
 - Real Microsoft Word rendering plus negative rendering fixtures: **6 passed**.
 - Subsequent build-pin and interface checks: **8 passed**. Co-author checks,
   including the submission-gate regression: **5 passed**.
+- Final recovery checks, including portable Windows filenames: **11 passed**.
 - All three deterministic synthetic research benchmark cases passed, including
   rejection of the seeded unsupported claims and numerical discrepancies.
 - Installed dependency consistency, build pins, critical lint and whitespace checks passed.

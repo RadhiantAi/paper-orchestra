@@ -131,3 +131,28 @@ def test_failed_staged_restore_leaves_no_project(tmp_path, monkeypatch):
         restore_project(tmp_path / "good.zip", tmp_path / "restored")
     assert not (tmp_path / "restored").exists()
     assert not list(tmp_path.glob(".recovery-*"))
+
+
+def test_windows_extensionless_external_source_restores_portably(tmp_path):
+    w = tmp_path / "project"
+    create_project(w)
+    backup_project(w, tmp_path / "good.zip")
+    with zipfile.ZipFile(tmp_path / "good.zip") as z:
+        members = {n: z.read(n) for n in z.namelist()}
+    manifest = json.loads(members["manifest.json"])
+    # Windows parent contains a dot, while the source filename has no extension.
+    manifest["files"].append(
+        dict(
+            manifest["files"][0], original=r"C:\Synthetic.Writer\source", relative=None
+        )
+    )
+    members["manifest.json"] = json.dumps(manifest).encode()
+    with zipfile.ZipFile(tmp_path / "portable.zip", "w") as z:
+        for name, blob in members.items():
+            z.writestr(name, blob)
+    restore_project(tmp_path / "portable.zip", tmp_path / "restored")
+    assert (tmp_path / "restored" / "recovered-external" / "1").is_file()
+    assert (
+        backup_project(tmp_path / "restored", tmp_path / "again.zip")["status"]
+        == "complete"
+    )

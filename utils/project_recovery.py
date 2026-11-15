@@ -1,7 +1,7 @@
 """Content-addressed private snapshots and checked portable recovery archives."""
 
 from copy import deepcopy
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import hashlib
 import json
 import os
@@ -261,9 +261,11 @@ def restore_project(archive_path, destination):
     manifest = inspect_backup(archive_path)
     mapping = {}
     for n, f in enumerate(manifest["files"]):
-        name = f["relative"] or (
-            "recovered-external/" + str(n) + Path(f["original"]).suffix.lower()
-        )
+        # Parse Windows source names consistently when restoring on Linux.
+        suffix = PureWindowsPath(f["original"]).suffix.lower()
+        if not re.fullmatch(r"\.[a-z0-9]{1,10}", suffix):
+            suffix = ""
+        name = f["relative"] or ("recovered-external/" + str(n) + suffix)
         mapping[f["original"]] = str(destination / name)
     if len({p.casefold() for p in mapping.values()}) != len(mapping):
         raise ValueError("Recovery paths collide.")
