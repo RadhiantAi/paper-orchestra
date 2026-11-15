@@ -16,7 +16,13 @@ from utils.project_store import (
 from utils.research_quality import fingerprint
 from utils.run_control import digest, write_json
 
-VERSION = "1"
+VERSION = "2"
+
+
+def recipe_code_hash():
+    return fingerprint(
+        [digest(__file__), digest(Path(__file__).with_name("design_recipes.py"))]
+    )
 
 
 def _integer(value):
@@ -49,6 +55,10 @@ def kappa(cells):
 
 
 def calculate(recipe, rows):
+    from utils.design_recipes import NAMES, calculate_design
+
+    if recipe.get("name") in NAMES:
+        return calculate_design(recipe, rows)
     if set(recipe) - {
         "name",
         "sampling_unit",
@@ -192,7 +202,7 @@ def run_recipe(workspace, recipe, source, output, reviewer, reason):
         "input": file_receipt(snapshot),
         "original_input": original,
         "output": file_receipt(destination / "analysis.json"),
-        "code_sha256": digest(__file__),
+        "code_sha256": recipe_code_hash(),
         "output_sha256": digest(destination / "analysis.json"),
         "reviewer": reviewer,
         "reason": reason,
@@ -212,7 +222,7 @@ def verify_calculation(record):
     if record.get("kind") != "local_recipe":
         return False
     if (
-        record.get("code_sha256") != digest(__file__)
+        record.get("code_sha256") != recipe_code_hash()
         or record.get("numpy_version") != np.__version__
     ):
         return False

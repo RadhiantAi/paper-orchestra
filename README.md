@@ -17,6 +17,11 @@ OCR, reproducible aggregate analyses and journal checks. Networking is **offline
 default**. An authorised live run must explicitly set `PAPER_NETWORK_MODE=online`;
 this applies even to free or local model endpoints.
 
+[RECOVERY_AND_COAUTHORS.md](RECOVERY_AND_COAUTHORS.md) covers automatic snapshots,
+checked private backups and restore, the desktop launcher, returned Word reviews,
+additional statistical designs, real Office regression checks and reviewed
+dependency maintenance.
+
 Read [RELIABILITY.md](RELIABILITY.md) for setup, saved runs, spending limits and verification; [DISCOVERY.md](DISCOVERY.md) covers literature sources. [FORK_NOTES.md](FORK_NOTES.md) summarises the fork. The upstream authors listed above created PaperOrchestra; this fork is independently modified.
 
 

@@ -635,6 +635,9 @@ def check_pack(workspace, directory):
                 if not comment:
                     problems.append({"kind": "query_comment_missing", "id": q["id"]})
     coverage = discussion_coverage(data, manuscript)
+    from utils.coauthor_review import coauthor_findings
+
+    pending.extend(coauthor_findings(data, manuscript))
     pending.extend(coverage["findings"])
     if coverage["status"] == "not_checked":
         pending.append({"kind": "discussion_coverage_not_checked"})

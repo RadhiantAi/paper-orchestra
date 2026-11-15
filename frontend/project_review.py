@@ -31,7 +31,16 @@ from utils.review_actions import (
 
 def action(fn, success="Saved."):
     try:
+        record = st.session_state.get("_project_record")
+        before = (
+            Path(record).stat().st_mtime_ns
+            if record and Path(record).exists()
+            else None
+        )
         value = fn()
+        if before is not None and Path(record).stat().st_mtime_ns != before:
+            st.session_state["_saved_notice"] = success
+            st.rerun()
         st.success(success)
         return value
     except (ValueError, OSError, KeyError, StopIteration, RuntimeError) as exc:
@@ -50,6 +59,7 @@ def source_label(s):
 
 def render_project(workspace):
     workspace = private_path(workspace)
+    st.session_state["_project_record"] = str(workspace / "project.json")
     st.title("Manuscript project review")
     st.caption(
         "Confidential local workspace. Reviewer names record decisions; they do not authenticate identity."
@@ -58,11 +68,34 @@ def render_project(workspace):
         "This review screen works locally. It makes no model calls or external searches."
     )
     data = load_project(workspace)
+    if "_saved_notice" in st.session_state:
+        st.success(st.session_state.pop("_saved_notice"))
+    from frontend.project_home import readiness, selected_file, recovery_screen
+
+    counts = readiness(data)
+    with st.expander("What still needs attention", expanded=any(counts.values())):
+        st.write(counts)
+        next_step = next(
+            (label for label, count in counts.items() if count),
+            "No outstanding items in these project checks",
+        )
+        st.write("Next: " + next_step)
+        st.caption("Project checks only. Run the complete pack checks before release.")
     if dependency_status(data):
         st.error(
             "Source files changed or disappeared. Reindex before releasing a pack."
         )
-    sources, questions, edits, results, figures, coverage, packs = st.tabs(
+    (
+        sources,
+        questions,
+        edits,
+        results,
+        figures,
+        coverage,
+        packs,
+        coauthors,
+        recovery,
+    ) = st.tabs(
         [
             "Sources and manuscript",
             "Author questions",
@@ -71,6 +104,8 @@ def render_project(workspace):
             "Figures",
             "Journal and discussion",
             "Review pack",
+            "Co-author returns",
+            "Backup and recovery",
         ]
     )
     with sources:
@@ -325,8 +360,8 @@ def render_project(workspace):
     with packs:
         st.subheader("Prepare a review pack")
         st.caption("Files remain local. Creating a ZIP does not send or submit it.")
-        manuscript = st.text_input("Manuscript Word file")
-        title = st.text_input("Approved title page Word file")
+        manuscript = selected_file(workspace, "Manuscript Word file", "pack_manuscript")
+        title = selected_file(workspace, "Approved title page Word file", "pack_title")
         extras = st.text_area("Supplement paths, one per line")
         result_folder = st.text_input("Exported results folder (optional)")
         mappings = []
@@ -390,3 +425,9 @@ def render_project(workspace):
                     file_name=Path(dest).name,
                     mime="application/zip",
                 )
+    with coauthors:
+        from frontend.coauthor_screen import coauthor_screen
+
+        coauthor_screen(workspace, data)
+    with recovery:
+        recovery_screen(workspace)
