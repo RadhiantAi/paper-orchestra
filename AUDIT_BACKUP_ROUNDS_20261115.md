@@ -35,6 +35,8 @@ testing remained disabled.
 - Submission checks flag superseded wording reintroduced alongside the latest
   accepted wording. A three-round chain follows the final decision while preserving
   intermediate history. An encrypted restore retains those links and source hashes.
+- Draft responses show the reason for supersession and its reviewer, while retaining
+  the earlier decision reason as history. Invalidated replacements are flagged.
 - UI controls show earlier and replacement wording side by side. Retention figures
   use readable storage units, and the preview explicitly records that nothing was deleted.
 

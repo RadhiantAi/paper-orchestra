@@ -508,7 +508,8 @@ def export_response(workspace, issued_id, destination):
         raise ValueError("Choose a new response Word file.")
     doc = Document()
     doc.add_heading("Draft response to co-author comments", 0)
-    for r in load_project(workspace).get("coauthor_returns", []):
+    data = load_project(workspace)
+    for r in data.get("coauthor_returns", []):
         if r["issued_id"] != issued_id:
             continue
         for item in r["items"]:
@@ -517,7 +518,23 @@ def export_response(workspace, issued_id, destination):
                 item.get("text")
                 or "\n".join(item["before"]) + " -> " + "\n".join(item["after"])
             )
-            doc.add_paragraph(item.get("reason", "Awaiting review."))
+            if item["status"] == "superseded":
+                link = item.get("supersession", {})
+                doc.add_paragraph(
+                    "Reason for replacement: " + link.get("reason", "Needs review.")
+                )
+                doc.add_paragraph(
+                    "Replacement reviewed by: "
+                    + link.get("reviewer", "Needs confirmation.")
+                )
+                if not supersession_valid(data, item["id"]):
+                    doc.add_paragraph(
+                        "This replacement decision needs review because its evidence or later decision is no longer current."
+                    )
+                if item.get("reason"):
+                    doc.add_paragraph("Earlier decision reason: " + item["reason"])
+            else:
+                doc.add_paragraph(item.get("reason", "Awaiting review."))
     dest.parent.mkdir(parents=True, exist_ok=True)
     doc.save(dest)
     return {"status": "draft_created", "sent": False}

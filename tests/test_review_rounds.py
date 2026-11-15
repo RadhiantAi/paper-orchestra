@@ -112,6 +112,14 @@ def test_supersession_preserves_decisions_and_survives_private_recovery(tmp_path
     old = data["coauthor_returns"][0]["items"][0]
     assert old["status"] == "superseded" and old["decisions"][0]["status"] == "accepted"
     assert old["after"] == ["First revision."]
+    from utils.coauthor_review import export_response
+
+    export_response(w, first["id"], tmp_path / "response.docx")
+    response = "\n".join(
+        p.text for p in Document(tmp_path / "response.docx").paragraphs
+    )
+    assert "Reason for replacement: Later evidence replaces earlier wording" in response
+    assert "Earlier decision reason: Checked first revision" in response
     password = "Synthetic round recovery passphrase"
     backup_project(w, tmp_path / "backup.porx", password=password)
     restore_project(tmp_path / "backup.porx", tmp_path / "restored", password)
