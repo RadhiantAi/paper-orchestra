@@ -9,6 +9,8 @@ import re
 import uuid
 import zipfile
 import tempfile
+import io
+from datetime import datetime, timezone
 
 from utils.run_control import digest, write_json
 
@@ -55,7 +57,11 @@ def snapshot(workspace, data):
     paths = set()
     for folder, dirs, names in os.walk(root, followlinks=False):
         dirs[:] = [
-            n for n in dirs if n not in SKIP and not (Path(folder) / n).is_symlink()
+            n
+            for n in dirs
+            if n not in SKIP
+            and not (Path(folder) / n).is_symlink()
+            and not (Path(folder) / n).is_junction()
         ]
         paths.update(
             Path(folder) / name
@@ -112,6 +118,7 @@ def snapshot(workspace, data):
         )
     manifest = {
         "schema": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "project_schema": data["schema"],
         "workspace": str(root),
         "files": entries,
@@ -124,11 +131,17 @@ def snapshot(workspace, data):
     return manifests / name
 
 
-def backup_project(workspace, destination, snapshot_file=None):
+def backup_project(workspace, destination, snapshot_file=None, password=None):
     from utils.project_store import private_path, load_project
     from utils.review_workspace import review_lock
 
     root, destination = private_path(workspace), private_path(destination)
+    if password is not None and destination.suffix.lower() != ".porx":
+        raise ValueError("Use .porx for an encrypted recovery archive.")
+    if password is None and destination.suffix.lower() != ".zip":
+        raise ValueError(
+            "Use .zip for an unencrypted backup, or supply a passphrase for .porx."
+        )
     if destination.exists() or destination.is_relative_to(root):
         raise ValueError("Use a new backup ZIP outside the project folder.")
     with review_lock(root):
@@ -150,21 +163,79 @@ def backup_project(workspace, destination, snapshot_file=None):
                 or digest(root / ".recovery" / "objects" / sha) != sha
             ):
                 raise ValueError("Snapshot data is corrupt.")
-        with zipfile.ZipFile(destination, "x", zipfile.ZIP_DEFLATED) as archive:
+        from utils.recovery_crypto import MAX_PLAINTEXT, encrypt_archive
+
+        if (
+            password is not None
+            and sum(f["bytes"] for f in manifest["files"]) > MAX_PLAINTEXT - 1024**2
+        ):
+            raise ValueError(
+                "Encrypted exports support up to 127 MiB of source content. Use protected storage for larger projects."
+            )
+        buffer = io.BytesIO() if password is not None else None
+        with zipfile.ZipFile(
+            buffer if buffer is not None else destination,
+            "w" if buffer is not None else "x",
+            zipfile.ZIP_DEFLATED,
+        ) as archive:
             archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False))
             for sha in sorted(hashes):
                 archive.write(root / ".recovery" / "objects" / sha, "objects/" + sha)
-    inspect_backup(destination)
+        if buffer is not None:
+            envelope = encrypt_archive(buffer.getvalue(), password)
+            # Authenticate and inspect the encrypted representation before writing it.
+            from utils.recovery_crypto import decrypt_archive
+
+            inspect_backup(io.BytesIO(decrypt_archive(envelope, password)))
+            with destination.open("xb") as stream:
+                stream.write(envelope)
+    inspect_backup(destination, password)
     return {
         "status": "complete" if manifest["complete"] else "incomplete",
         "files": len(manifest["files"]),
         "missing": len(manifest["missing"]),
         "sha256": digest(destination),
+        "encrypted": password is not None,
     }
 
 
-def inspect_backup(path):
-    with zipfile.ZipFile(path) as archive:
+def _archive_source(path, password=None):
+    from utils.recovery_crypto import MAGIC, MAX_ENVELOPE, decrypt_archive
+
+    if hasattr(path, "read"):
+        path.seek(0)
+        return path
+    path = Path(path)
+    with path.open("rb") as stream:
+        encrypted = stream.read(len(MAGIC)) == MAGIC
+    if encrypted:
+        if password is None:
+            raise ValueError("This archive requires a passphrase.")
+        if path.stat().st_size > MAX_ENVELOPE:
+            raise ValueError("Encrypted archive exceeds the size limit.")
+        return io.BytesIO(decrypt_archive(path.read_bytes(), password))
+    if password is not None or path.suffix.lower() == ".porx":
+        raise ValueError("This is not a recognised encrypted recovery archive.")
+    return path
+
+
+def inspect_backup(path, password=None):
+    try:
+        return _inspect_backup(path, password)
+    except (
+        zipfile.BadZipFile,
+        KeyError,
+        TypeError,
+        UnicodeError,
+        OverflowError,
+    ) as exc:
+        raise ValueError(
+            "Invalid recovery archive structure or damaged content."
+        ) from exc
+
+
+def _inspect_backup(path, password=None):
+    with zipfile.ZipFile(_archive_source(path, password)) as archive:
         infos = archive.infolist()
         names = [i.filename for i in infos]
         if (
@@ -250,7 +321,7 @@ def inspect_backup(path):
         return manifest
 
 
-def restore_project(archive_path, destination):
+def restore_project(archive_path, destination, password=None):
     from utils.project_store import private_path
 
     destination = private_path(destination)
@@ -258,7 +329,7 @@ def restore_project(archive_path, destination):
         raise ValueError(
             "Restore requires a new folder; existing projects are preserved."
         )
-    manifest = inspect_backup(archive_path)
+    manifest = inspect_backup(archive_path, password)
     mapping = {}
     for n, f in enumerate(manifest["files"]):
         # Parse Windows source names consistently when restoring on Linux.
@@ -285,7 +356,7 @@ def restore_project(archive_path, destination):
     ) as temp:
         stage = Path(temp) / "project"
         stage.mkdir()
-        with zipfile.ZipFile(archive_path) as archive:
+        with zipfile.ZipFile(_archive_source(archive_path, password)) as archive:
             for f in manifest["files"]:
                 target = stage / Path(mapping[f["original"]]).relative_to(destination)
                 blob = archive.read("objects/" + f["sha256"])

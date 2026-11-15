@@ -45,8 +45,22 @@ def main(argv=None):
     a = sub.add_parser("backup")
     a.add_argument("--output", required=True)
     a.add_argument("--snapshot")
+    a.add_argument(
+        "--encrypt",
+        action="store_true",
+        help="Prompt privately for an export passphrase; use a .porx output",
+    )
     a = sub.add_parser("restore")
     a.add_argument("archive")
+    a.add_argument(
+        "--encrypted",
+        action="store_true",
+        help="Prompt privately for the restore passphrase",
+    )
+    a = sub.add_parser("retention-preview")
+    a.add_argument("--keep-latest", type=int, default=20)
+    a.add_argument("--keep-days", type=int, default=30)
+    a.add_argument("--output", required=True)
     a = sub.add_parser("inventory")
     a.add_argument("--output", required=True)
     a = sub.add_parser("ocr")
@@ -155,11 +169,40 @@ def main(argv=None):
     elif c == "backup":
         from utils.project_recovery import backup_project
 
-        result = backup_project(w, args.output, args.snapshot)
+        password = None
+        if args.encrypt:
+            from getpass import getpass
+
+            password = getpass("Backup passphrase: ")
+            if password != getpass("Repeat passphrase: "):
+                raise ValueError("Passphrases do not match.")
+        result = backup_project(w, args.output, args.snapshot, password)
     elif c == "restore":
         from utils.project_recovery import restore_project
 
-        result = restore_project(args.archive, w)
+        from utils.recovery_crypto import MAGIC
+
+        with Path(args.archive).open("rb") as stream:
+            encrypted = stream.read(len(MAGIC)) == MAGIC
+        password = None
+        if encrypted or args.encrypted:
+            from getpass import getpass
+
+            password = getpass("Recovery passphrase: ")
+        result = restore_project(args.archive, w, password)
+    elif c == "retention-preview":
+        from utils.recovery_storage import retention_preview
+
+        report = retention_preview(w, args.keep_latest, args.keep_days)
+        destination = private_path(args.output)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("x", encoding="utf-8") as stream:
+            json.dump(report, stream, indent=2)
+        result = {
+            "status": report["status"],
+            "candidate_snapshots": len(report["candidate_snapshots"]),
+            "deletion_performed": False,
+        }
     elif c == "inventory":
         report = source_inventory(load_project(w))
         write_json(args.output, report)
@@ -293,7 +336,7 @@ def main(argv=None):
         result = release_pack(w, args.directory, args.output)
     # Counts/status only. Never print source contents or recognised patient identifiers.
     print(json.dumps(result, indent=2))
-    if result.get("status") in {"failed", "incomplete"} or (
+    if result.get("status") in {"failed", "incomplete", "blocked"} or (
         c == "journal-check" and result.get("status") != "checked"
     ):
         raise SystemExit(1)
