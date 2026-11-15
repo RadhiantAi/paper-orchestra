@@ -164,6 +164,17 @@ def image_pixel_hash(blob):
         return None
 
 
+def referenced_word_images(path):
+    """Yield images referenced by Word content, excluding orphaned package media.
+
+    Main-document pictures and explicitly referenced headers/footers are covered.
+    This establishes a content reference, not correct placement or rendered fidelity.
+    Privacy checks deliberately still inspect every media part, including orphans.
+    """
+    from utils.figure_presence import image_occurrences
+    yield from (blob for blob, _ in image_occurrences(path))
+
+
 def doc_text(path):
     path = Path(path)
     if path.suffix.lower() == ".docx":
@@ -489,6 +500,11 @@ def check_pack(workspace, directory):
                         )
                         break
     manuscript = text_by_role.get("manuscript", "")
+    from utils.manuscript_completeness import audit_completeness
+    from utils.source_structure import allocation_findings
+    completeness = audit_completeness(manuscript, spec.get("manuscript_expectations"))
+    pending.extend(completeness["findings"])
+    pending.extend(allocation_findings(data))
     from utils.manuscript_consistency import audit_consistency
 
     consistency = audit_consistency(data, manuscript)
@@ -516,6 +532,7 @@ def check_pack(workspace, directory):
         pending.append({"kind": "statistical_plot_derivation_not_checked"})
     # Include embedded Office image bytes when looking for known unmasked originals.
     asset_hashes, pixel_hashes = set(), set()
+    present_hashes, present_pixels = set(), set()
     import hashlib
 
     for f in directory.rglob("*"):
@@ -523,12 +540,18 @@ def check_pack(workspace, directory):
             asset_hashes.add(digest(f))
             if f.suffix.lower() in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}:
                 pixel_hashes.add(image_pixel_hash(f.read_bytes()))
+                present_hashes.add(digest(f))
+                present_pixels.add(image_pixel_hash(f.read_bytes()))
             if f.suffix.lower() in {".docx", ".pptx"}:
                 with zipfile.ZipFile(f) as z:
                     for n in z.namelist():
                         if "/media/" in n:
                             asset_hashes.add(hashlib.sha256(z.read(n)).hexdigest())
                             pixel_hashes.add(image_pixel_hash(z.read(n)))
+                if f.suffix.lower() in {".docx", ".pptx"}:
+                    for blob in referenced_word_images(f):
+                        present_hashes.add(hashlib.sha256(blob).hexdigest())
+                        present_pixels.add(image_pixel_hash(blob))
             if f.suffix.lower() == ".pdf":
                 import pymupdf as fitz
 
@@ -537,6 +560,10 @@ def check_pack(workspace, directory):
                         blob = pdf.extract_image(xref)["image"]
                         asset_hashes.add(hashlib.sha256(blob).hexdigest())
                         pixel_hashes.add(image_pixel_hash(blob))
+                        # Resource dictionaries can retain images that are never painted.
+                        if any(page.get_image_rects(xref) for page in pdf):
+                            present_hashes.add(hashlib.sha256(blob).hexdigest())
+                            present_pixels.add(image_pixel_hash(blob))
     for fig in data["figures"]:
         if manuscript.count(fig["caption"]) != 1:
             problems.append({"kind": "caption_mismatch", "id": fig["id"]})
@@ -570,8 +597,8 @@ def check_pack(workspace, directory):
             display_pixels = (
                 image_pixel_hash(display.read_bytes()) if display.is_file() else None
             )
-            if p["display"]["sha256"] not in asset_hashes and not (
-                display_pixels and display_pixels in pixel_hashes
+            if p["display"]["sha256"] not in present_hashes and not (
+                display_pixels and display_pixels in present_pixels
             ):
                 problems.append(
                     {
@@ -594,6 +621,10 @@ def check_pack(workspace, directory):
                     problems.append(
                         {"kind": "unmasked_original_in_pack", "id": fig["id"]}
                     )
+    from utils.figure_presence import check_placements
+    placements = check_placements(directory, data["figures"], spec.get("figure_placements", []))
+    problems.extend(placements["problems"])
+    pending.extend(placements["pending"])
     figure_docs = [
         p
         for p in directory.glob("*")
@@ -730,6 +761,8 @@ def check_pack(workspace, directory):
         "numeric_status": audit["status"],
         "consistency": consistency,
         "coverage": coverage,
+        "completeness": completeness,
+        "figure_placements": placements,
         "journal": journal_report,
     }
 

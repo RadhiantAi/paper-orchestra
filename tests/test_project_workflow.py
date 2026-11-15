@@ -755,3 +755,72 @@ def test_stale_result_assets_and_comment_loss_fail(project, tmp_path, monkeypatc
         p["kind"] == "broken_comment_anchors"
         for p in check_pack(project, out)["problems"]
     )
+
+
+@pytest.mark.parametrize("defect", ["removed", "tracked_deletion", "unused_pdf_resource"])
+def test_orphaned_word_media_cannot_satisfy_registered_figure(
+    project, tmp_path, monkeypatch, defect
+):
+    """Removing a drawing leaves cached media bytes in DOCX; those are not a figure."""
+    spec = pack_fixture(project, tmp_path, monkeypatch)
+    image = tmp_path / "registered.png"
+    synthetic_image(image)
+    figure = {
+        "id": "Figure 1",
+        "caption": "Figure 1. Synthetic illustration.",
+        "panels": [{
+            "label": "A", "source_id": "s", "source_locator": "page:1",
+            "source_label": "Synthetic illustration", "original": file_receipt(image),
+            "display": file_receipt(image),
+        }],
+    }
+    figure["checks"] = {
+        key: {"status": "confirmed", "reviewer": "Synthetic reviewer",
+              "reason": "Synthetic fixture", "identity": figure_identity(figure)}
+        for key in ["image_identity", "caption", "clinical", "cohort", "reproduction", "privacy"]
+    }
+    import_host(project, host(figures=[figure]))
+    doc = Document(spec["files"][0]["path"])
+    doc.add_picture(str(image))
+    doc.add_paragraph(figure["caption"])
+    doc.save(spec["files"][0]["path"])
+    spec["files"][0].update(file_receipt(spec["files"][0]["path"]))
+    out = tmp_path / "figure-pack"
+    assert not prepare_pack(project, spec, out)["problems"]
+    doc = Document(out / "manuscript.docx")
+    for drawing in doc._element.xpath(".//w:drawing"):
+        if defect == "tracked_deletion":
+            run = drawing.getparent()
+            parent = run.getparent()
+            deletion = OxmlElement("w:del")
+            parent.replace(run, deletion)
+            deletion.append(run)
+        else:
+            drawing.getparent().remove(drawing)
+    doc.save(out / "manuscript.docx")
+    with zipfile.ZipFile(out / "manuscript.docx") as package:
+        assert any(name.startswith("word/media/") for name in package.namelist())
+    if defect == "unused_pdf_resource":
+        pdf_path = out / "manuscript.pdf"
+        with fitz.open(pdf_path) as pdf:
+            page = pdf[0]
+            text_stream = page.get_contents()[0]
+            page.insert_image(fitz.Rect(20, 400, 100, 480), filename=str(image))
+            page.set_contents(text_stream)
+            assert page.get_images() and not page.get_image_rects(page.get_images()[0][0])
+            pdf.save(tmp_path / "unused-resource.pdf")
+        pdf_path.write_bytes((tmp_path / "unused-resource.pdf").read_bytes())
+    report = check_pack(project, out)
+    assert any(p["kind"] == "registered_figure_image_missing" for p in report["problems"])
+
+
+def test_referenced_word_images_includes_active_header(tmp_path):
+    from utils.project_pack import referenced_word_images
+
+    image = tmp_path / "header-image.png"
+    synthetic_image(image)
+    doc = Document()
+    doc.sections[0].header.paragraphs[0].add_run().add_picture(str(image))
+    path = tmp_path / "header.docx"
+    doc.save(path)
+    assert list(referenced_word_images(path)) == [image.read_bytes()]

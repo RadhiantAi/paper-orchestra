@@ -370,6 +370,11 @@ def index_sources(workspace, roots, *, max_files=2000, convert=False, libreoffic
     )
     records = []
     project = load_project(workspace)
+    restricted = [r for r in project.get("source_allocations", []) if r["role"] != "trial_input"]
+    for path in paths[:max_files]:
+        if any(Path(r["source"]["path"]).resolve() == path.resolve() or
+               file_receipt(path)["sha256"] == r["source"]["sha256"] for r in restricted):
+            raise ValueError("An allocated source needs an explicit trial-input decision before indexing.")
     previous = {s["id"]: s for s in project["sources"]}
     for p in paths[:max_files]:
         record = {

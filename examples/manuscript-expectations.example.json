@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "reviewer": "Synthetic technical reviewer",
+  "reason": "Example only; replace with expectations for the actual article type",
+  "section_min_words": {"Introduction": 10, "Methods": 10, "Results": 10, "Discussion": 10},
+  "minimum_references": 2,
+  "discussion_passages": [{"topic": "Limitations", "quote": "A limited sample requires replication."}]
+}

@@ -31,6 +31,9 @@ SKIP = {
 
 
 def _receipts(value, key=""):
+    # Allocation is an inventory, not permission to ingest withheld originals.
+    if key == "source_allocations":
+        return
     if isinstance(value, dict):
         if (
             key != "ocr_engine"

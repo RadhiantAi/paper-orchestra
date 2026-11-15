@@ -21,7 +21,8 @@ VERSION = "2"
 
 def recipe_code_hash():
     return fingerprint(
-        [digest(__file__), digest(Path(__file__).with_name("design_recipes.py"))]
+        [digest(__file__), digest(Path(__file__).with_name("design_recipes.py")),
+         digest(Path(__file__).with_name("continuous_recipe.py"))]
     )
 
 
@@ -57,6 +58,9 @@ def kappa(cells):
 def calculate(recipe, rows):
     from utils.design_recipes import NAMES, calculate_design
 
+    if recipe.get("name") == "continuous_measurements":
+        from utils.continuous_recipe import calculate_continuous
+        return calculate_continuous(recipe, rows)
     if recipe.get("name") in NAMES:
         return calculate_design(recipe, rows)
     if set(recipe) - {
@@ -173,7 +177,7 @@ def run_recipe(workspace, recipe, source, output, reviewer, reason):
         raise ValueError("Reviewer and reason required for a calculation run.")
     source = Path(source)
     if source.stat().st_size > 2 * 1024**2:
-        raise ValueError("Aggregate CSV exceeds 2 MB.")
+        raise ValueError("Analysis CSV exceeds 2 MB.")
     original = file_receipt(source)
     with source.open(encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
@@ -187,7 +191,7 @@ def run_recipe(workspace, recipe, source, output, reviewer, reason):
     if destination.exists():
         raise ValueError("Choose a new analysis folder.")
     destination.mkdir(parents=True)
-    snapshot = destination / "aggregate-input.csv"
+    snapshot = destination / ("measurement-input.csv" if recipe["name"] == "continuous_measurements" else "aggregate-input.csv")
     snapshot.write_bytes(source.read_bytes())
     if digest(snapshot) != original["sha256"]:
         raise ValueError("Input changed during calculation.")

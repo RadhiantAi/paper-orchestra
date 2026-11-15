@@ -42,6 +42,21 @@ def main(argv=None):
     p.add_argument("--workspace", required=True)
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
+    a = sub.add_parser("source-structure")
+    a.add_argument("source")
+    a.add_argument("--output", required=True)
+    a = sub.add_parser("allocate-source")
+    a.add_argument("source")
+    a.add_argument("--role", required=True, choices=["candidate_primary", "trial_input", "withheld_reference", "uncertain", "excluded"])
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
+    a = sub.add_parser("completeness-check")
+    a.add_argument("manuscript")
+    a.add_argument("--profile")
+    a.add_argument("--output", required=True)
+    a = sub.add_parser("image-locations")
+    a.add_argument("document")
+    a.add_argument("--output", required=True)
     a = sub.add_parser("workbook-result")
     a.add_argument("source_id")
     a.add_argument("--count-cell", required=True)
@@ -274,6 +289,26 @@ def main(argv=None):
             "candidate_snapshots": len(report["candidate_snapshots"]),
             "deletion_performed": False,
         }
+    elif c == "source-structure":
+        from utils.source_structure import inspect_structure
+        report = inspect_structure(args.source)
+        write_json(private_path(args.output), report)
+        result = {"status": report["status"], "sheets": len(report["sheets"])}
+    elif c == "allocate-source":
+        from utils.source_structure import allocate_source
+        allocate_source(w, args.source, args.role, args.reviewer, args.reason)
+        result = {"status": "allocation_recorded_not_author_approval"}
+    elif c == "completeness-check":
+        from utils.manuscript_completeness import audit_completeness
+        report = audit_completeness(doc_text(args.manuscript), read(args.profile) if args.profile else None)
+        write_json(private_path(args.output), report)
+        result = {"status": report["status"], "findings": len(report["findings"])}
+    elif c == "image-locations":
+        import hashlib
+        from utils.figure_presence import image_occurrences
+        report = [{"location": loc, "sha256": hashlib.sha256(blob).hexdigest()} for blob, loc in image_occurrences(args.document)]
+        write_json(private_path(args.output), report)
+        result = {"status": "saved", "occurrences": len(report)}
     elif c == "inventory":
         report = source_inventory(load_project(w))
         write_json(args.output, report)
@@ -408,7 +443,7 @@ def main(argv=None):
     # Counts/status only. Never print source contents or recognised patient identifiers.
     print(json.dumps(result, indent=2))
     if result.get("status") in {"failed", "incomplete", "blocked"} or (
-        c in {"journal-check", "consistency-check"}
+        c in {"journal-check", "consistency-check", "completeness-check"}
         and result.get("status") != "checked"
     ):
         raise SystemExit(1)

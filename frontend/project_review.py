@@ -390,6 +390,8 @@ def render_project(workspace):
         journal = st.text_input("Journal profile JSON file (optional)")
         out = st.text_input("New pack folder", str(workspace / "pack-v1"))
         office = st.text_input("Pack LibreOffice executable (optional)")
+        from frontend.manuscript_checks import pack_quality_controls
+        expectations, placements = pack_quality_controls(data)
         if st.button("Build Word and PDF pack"):
 
             def build():
@@ -408,6 +410,9 @@ def render_project(workspace):
                     profile,
                     result_folder or None,
                 )
+                if expectations is not None:
+                    spec["manuscript_expectations"] = expectations
+                spec["figure_placements"] = placements
                 return prepare_pack(workspace, spec, out, office or None)
 
             report = action(

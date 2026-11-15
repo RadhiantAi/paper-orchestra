@@ -15,6 +15,21 @@ def source_recovery(workspace, data):
     from frontend.project_review import action, source_label
     from utils.source_recovery import source_inventory, recover_ocr, confirm_ocr
 
+    from utils.source_structure import inspect_structure, allocate_source, ROLES, allocation_findings
+    with st.expander("Review workbook structure before choosing trial sources"):
+        st.caption("Inspect occupancy and cell types without displaying values. Keep withheld originals outside this project. Structural clues do not prove a source is primary data.")
+        path = st.text_input("Original workbook path outside the project")
+        if st.button("Inspect workbook structure"):
+            report = action(lambda: inspect_structure(path), "Structure inspected; choose its role after review.")
+            if report:
+                st.json(report)
+        role = st.selectbox("Source allocation", ROLES)
+        reviewer = st.text_input("Source allocation reviewer")
+        reason = st.text_area("Source allocation reason")
+        if st.button("Record source allocation"):
+            action(lambda: allocate_source(workspace, path, role, reviewer, reason))
+        st.write(allocation_findings(data))
+
     with st.expander("Duplicates, missing sources and scanned pages"):
         st.write(source_inventory(data))
         local = {
@@ -72,7 +87,7 @@ def analysis_screen(workspace, data):
     from frontend.project_review import action
     from utils.analysis_recipes import run_recipe, register_proportions
 
-    with st.expander("Run a reproducible aggregate analysis"):
+    with st.expander("Run a reproducible analysis"):
         st.caption(
             "Choose the recipe for the study design. Use anonymous unit or cluster IDs; confirm the assumptions before calculation."
         )
@@ -84,6 +99,7 @@ def analysis_screen(workspace, data):
                 "clustered_proportion",
                 "clustered_binary_agreement",
                 "multirater_fleiss",
+                "continuous_measurements",
             ],
         )
         examples = {
@@ -92,18 +108,27 @@ def analysis_screen(workspace, data):
             "clustered_proportion": "cluster_id,count,denominator,missing_count",
             "clustered_binary_agreement": "cluster_id,n00,n01,n10,n11,missing_count",
             "multirater_fleiss": "unit_id,n0,n1,missing_count",
+            "continuous_measurements": "unit_id,group,x,y",
         }
         st.code(examples[name])
         from frontend.project_home import selected_file
 
         source = selected_file(
-            workspace, "Aggregate CSV file", "analysis_csv", ("csv",)
+            workspace, "Analysis CSV file", "analysis_csv", ("csv",)
         )
         unit = st.text_input("Independent sampling unit")
         independent = st.checkbox(
-            "I confirm these counts represent independent sampling units"
+            "I confirm each row represents an independent unit" if name == "continuous_measurements" else "I confirm these counts represent independent sampling units"
         )
         design = {}
+        if name == "continuous_measurements":
+            st.caption("One independent anonymous unit per row. Blank measurements mean missing; no imputation. This records technical method checks, not scientific or author approval.")
+            unit_lines = st.text_area("Measurement columns and units (column,unit per line)", "x,mm\ny,mm")
+            group_lines = st.text_area("Group codes and meanings (code,meaning per line)", "A,Sample A")
+            design["group_definition"] = st.text_input("How groups were defined")
+            design["missingness_reason"] = st.text_input("Reason for missing measurements (state unknown if unresolved)")
+            design["predictors"] = [x.strip() for x in st.text_input("Predictor columns, separated by commas", "x").split(",") if x.strip()]
+            design["outcomes"] = [x.strip() for x in st.text_input("Outcome columns, separated by commas", "y").split(",") if x.strip()]
         if name.startswith("clustered_"):
             design["independent_clusters_confirmed"] = st.checkbox(
                 "I confirm independence between whole clusters"
@@ -137,6 +162,16 @@ def analysis_screen(workspace, data):
         who = st.text_input("Analysis reviewer")
         why = st.text_area("Analysis method and assumptions checked")
         if st.button("Run local analysis"):
+            if name == "continuous_measurements":
+                def parse_lines(text):
+                    pairs = [line.split(",", 1) for line in text.splitlines() if line.strip()]
+                    if any(len(pair) != 2 for pair in pairs) or len({p[0].strip() for p in pairs}) != len(pairs):
+                        raise ValueError("Use unique column/code names with one comma and a meaning per line.")
+                    return {key.strip(): value.strip() for key, value in pairs}
+                parsed = action(lambda: (parse_lines(unit_lines), parse_lines(group_lines)), "Definitions read.")
+                if parsed is None:
+                    return
+                design["units"], design["groups"] = parsed
             recipe = {
                 "name": name,
                 "sampling_unit": unit,
