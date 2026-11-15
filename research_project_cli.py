@@ -42,6 +42,11 @@ def main(argv=None):
     p.add_argument("--workspace", required=True)
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
+    a = sub.add_parser("backup")
+    a.add_argument("--output", required=True)
+    a.add_argument("--snapshot")
+    a = sub.add_parser("restore")
+    a.add_argument("archive")
     a = sub.add_parser("inventory")
     a.add_argument("--output", required=True)
     a = sub.add_parser("ocr")
@@ -147,6 +152,14 @@ def main(argv=None):
     if c == "init":
         create_project(w)
         result = {"status": "created"}
+    elif c == "backup":
+        from utils.project_recovery import backup_project
+
+        result = backup_project(w, args.output, args.snapshot)
+    elif c == "restore":
+        from utils.project_recovery import restore_project
+
+        result = restore_project(args.archive, w)
     elif c == "inventory":
         report = source_inventory(load_project(w))
         write_json(args.output, report)
@@ -280,7 +293,7 @@ def main(argv=None):
         result = release_pack(w, args.directory, args.output)
     # Counts/status only. Never print source contents or recognised patient identifiers.
     print(json.dumps(result, indent=2))
-    if result.get("status") == "failed" or (
+    if result.get("status") in {"failed", "incomplete"} or (
         c == "journal-check" and result.get("status") != "checked"
     ):
         raise SystemExit(1)

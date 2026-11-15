@@ -8,7 +8,9 @@ Open an existing private project with:
 streamlit run review_app.py -- --workspace C:\private\study
 ```
 
-Create it first with `python research_project_cli.py --workspace C:\private\study init`.
+Double-click `Launch Review.cmd` on Windows, or omit `--workspace` to use the
+project chooser. Create or restore private projects there. See
+[Recovery and co-author workflow](RECOVERY_AND_COAUTHORS.md) for the new controls.
 The server binds to localhost and disables usage telemetry. Keep the project and
 all research files outside this public checkout. This is a single-user local tool;
 reviewer names record decisions but do not authenticate identity.
@@ -38,7 +40,8 @@ reviewer names record decisions but do not authenticate identity.
    files, check them, inspect the rendered documents and record visual review before
    creating a ZIP. Any subsequent file or project change invalidates that review.
 
-After importing or updating sources, refresh the screen to load the saved state.
+Saved project changes automatically refresh the screen. The co-author tab reviews
+returned Word documents; the recovery tab exports checked private backups.
 Word/PDF conversion needs locally installed Word on Windows or the selected
 LibreOffice executable. A ZIP stays local; no workflow sends it.
 
@@ -73,7 +76,7 @@ redaction tool. Privacy still requires the figure review and authorised masking.
 
 ## Reproducible aggregate analyses
 
-Two fixed recipes are available:
+Five fixed recipes are available. The original two are:
 
 | Recipe | Required CSV columns | Output |
 |---|---|---|
@@ -81,9 +84,12 @@ Two fixed recipes are available:
 | `paired_binary_agreement` | `id,label,n00,n01,n10,n11` | Observed agreement, unweighted Cohen kappa and percentile bootstrap interval |
 
 Both accept optional `missing_count`, reported separately and excluded from
-observed denominators. Counts must describe independent sampling units. Clustered
-observations, weighted kappa, adjudication and patient-level modelling need separate
-reviewed recipes. These recipes do not reproduce arbitrary external analyses.
+observed denominators. Counts must describe independent sampling units. Additional
+recipes cover whole-cluster proportions, clustered binary agreement and Fleiss
+multi-rater agreement under explicit design constraints. See the
+[recipe table and limitations](RECOVERY_AND_COAUTHORS.md#additional-statistical-recipes).
+Weighted kappa, adjudication and patient-level modelling need separate reviewed
+recipes. These recipes do not reproduce arbitrary external analyses.
 
 Every run records the sampling unit, independence confirmation, confidence level,
 random seed, bootstrap count, input snapshot, original input hash, recipe code hash,
@@ -128,8 +134,8 @@ Tests remove provider credentials and deny network sockets; positive adapter tes
 use mocks. No live model test is part of the suite.
 
 GitHub Actions runs Python tests on Windows and Ubuntu, isolated TeX compilation,
-and real Tesseract against a generated synthetic image. Local runs without those
-installed tools skip the two integration tests; their dedicated CI jobs exercise
-them. Protect `main` with strict required passing checks, administrator enforcement,
+real Tesseract against a generated synthetic image, and real LibreOffice rendering.
+Local runs without enabled integration tools skip their dedicated tests; separate
+CI jobs exercise them. Protect `main` with strict required passing checks, administrator enforcement,
 resolved review conversations and no force pushes or deletion. Repository rules are
 hosting settings, so check their current state before relying on them.

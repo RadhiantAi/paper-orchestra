@@ -74,21 +74,56 @@ def analysis_screen(workspace, data):
 
     with st.expander("Run a reproducible aggregate analysis"):
         st.caption(
-            "These recipes use aggregate counts. Correlated or clustered observations need a different analysis."
+            "Choose the recipe for the study design. Use anonymous unit or cluster IDs; confirm the assumptions before calculation."
         )
         name = st.selectbox(
-            "Analysis recipe", ["binary_proportion", "paired_binary_agreement"]
+            "Analysis recipe",
+            [
+                "binary_proportion",
+                "paired_binary_agreement",
+                "clustered_proportion",
+                "clustered_binary_agreement",
+                "multirater_fleiss",
+            ],
         )
-        st.code(
-            "id,label,count,denominator,missing_count"
-            if name == "binary_proportion"
-            else "id,label,n00,n01,n10,n11,missing_count"
+        examples = {
+            "binary_proportion": "id,label,count,denominator,missing_count",
+            "paired_binary_agreement": "id,label,n00,n01,n10,n11,missing_count",
+            "clustered_proportion": "cluster_id,count,denominator,missing_count",
+            "clustered_binary_agreement": "cluster_id,n00,n01,n10,n11,missing_count",
+            "multirater_fleiss": "unit_id,n0,n1,missing_count",
+        }
+        st.code(examples[name])
+        from frontend.project_home import selected_file
+
+        source = selected_file(
+            workspace, "Aggregate CSV file", "analysis_csv", ("csv",)
         )
-        source = st.text_input("Aggregate CSV file")
         unit = st.text_input("Independent sampling unit")
         independent = st.checkbox(
             "I confirm these counts represent independent sampling units"
         )
+        design = {}
+        if name.startswith("clustered_"):
+            design["independent_clusters_confirmed"] = st.checkbox(
+                "I confirm independence between whole clusters"
+            )
+            if name == "clustered_proportion":
+                design["weighting"] = st.selectbox(
+                    "Proportion weighting", ["observation", "cluster_equal"]
+                )
+        elif name == "multirater_fleiss":
+            design["categories"] = int(
+                st.number_input(
+                    "Number of rating categories", min_value=2, max_value=20, value=2
+                )
+            )
+            design["raters_design"] = st.selectbox(
+                "Rater sampling design", ["not_confirmed", "interchangeable", "fixed"]
+            )
+            st.caption(
+                "Provide n0 through n(K-1). Fixed-rater and clustered multi-rater inference need a different reviewed method."
+            )
         confidence = st.number_input(
             "Confidence level", min_value=0.51, max_value=0.999, value=0.95
         )
@@ -109,7 +144,10 @@ def analysis_screen(workspace, data):
                 "confidence": confidence,
                 "seed": int(seed),
                 "bootstrap_iterations": int(iterations),
+                **design,
             }
+            if name.startswith("clustered_"):
+                recipe.pop("independent_units_confirmed")
             receipt = action(
                 lambda: run_recipe(workspace, recipe, source, dest, who, why),
                 "Calculation saved. Review it before approving manuscript results.",

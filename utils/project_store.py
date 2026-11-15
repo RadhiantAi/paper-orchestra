@@ -51,7 +51,11 @@ def update_project(path, transform):
     path = private_path(path)
     with review_lock(path):
         data = load_project(path)
+        from utils.project_recovery import snapshot
+
+        snapshot(path, data)
         transform(data)
+        snapshot(path, data)
         write_json(path / "project.json", data)
     return data
 
