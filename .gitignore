@@ -11,3 +11,4 @@ __pycache__/
 model-policy.json
 connectors.json
 private/
+.hypothesis/

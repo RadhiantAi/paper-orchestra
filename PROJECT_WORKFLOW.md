@@ -87,9 +87,10 @@ Word counts exclude Markdown headings and References/Bibliography sections, and
 include tables and captions. Word Heading styles are converted to section markers
 when checking a pack. Plain, manually formatted headings need explicit conversion.
 
-The local screen records author questions and displays source/figure status.
-Conditional proofs, result approvals and pack operations use the CLI. Reviewer
-names are audit labels and do not authenticate a person's identity.
+The local screen supports conditional evidence, result approvals, earlier edits,
+figure checks, OCR, aggregate analyses, journal requirements and pack operations.
+See [REVIEW_WORKBENCH.md](REVIEW_WORKBENCH.md). Reviewer names are audit labels and
+do not authenticate a person's identity.
 
 ## Approved results and figures
 

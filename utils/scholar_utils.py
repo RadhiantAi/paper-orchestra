@@ -33,6 +33,8 @@ _last_search = 0.0
 def s2_search(query, limit=20):
     """Retrieve candidate records without a model-provider search tool."""
     global _last_search
+    from utils.network_policy import require_online
+    require_online('Semantic Scholar retrieval')
     headers = {"X-API-KEY": S2_API_KEY} if S2_API_KEY else {}
     try:
         with _search_lock:
@@ -59,6 +61,8 @@ def s2_search(query, limit=20):
 def s2_title_search(
     title_query: str, year_hint: int = None, cutoff_date: str = None
 ) -> Optional[Dict]:
+    from utils.network_policy import require_online
+    require_online('Semantic Scholar retrieval')
     headers = {"X-API-KEY": S2_API_KEY} if S2_API_KEY else {}
 
     def is_date_valid(p_date, p_year, cutoff_str):

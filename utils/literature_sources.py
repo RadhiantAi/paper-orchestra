@@ -164,6 +164,9 @@ class SearchTransport:
         body=None,
         with_headers=False,
     ):
+        from utils.network_policy import require_online
+
+        require_online("external literature retrieval")
         # Serialize reservation and pacing across all tasks in this discovery run.
         with self.lock:
             if self.requests_used >= self.max_requests or self.remaining() <= 0:

@@ -71,11 +71,24 @@ def paragraph_replace(p, old, new, yellow=False):
 
 
 def all_paragraphs(doc):
-    yield from doc.paragraphs
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                yield from cell.paragraphs
+    from docx.oxml.ns import qn
+    from docx.text.paragraph import Paragraph
+    from docx.table import Table
+
+    def walk(element, parent):
+        for child in element:
+            if child.tag == qn("w:p"):
+                yield Paragraph(child, parent)
+            elif child.tag == qn("w:tbl"):
+                table = Table(child, parent)
+                seen = set()
+                for row in table.rows:
+                    for cell in row.cells:
+                        if cell._tc not in seen:
+                            seen.add(cell._tc)
+                            yield from walk(cell._tc, cell)
+
+    yield from walk(doc.element.body, doc)
 
 
 def reviewed_span(paragraph, quote):
@@ -154,10 +167,12 @@ def image_pixel_hash(blob):
 def doc_text(path):
     path = Path(path)
     if path.suffix.lower() == ".docx":
-        return "\n".join(
-            ("# " if p.style.name.startswith("Heading") else "") + p.text
-            for p in all_paragraphs(Document(path))
-        )
+
+        def heading(p):
+            match = re.fullmatch(r"Heading (\d)", p.style.name)
+            return "#" * int(match[1]) + " " if match else ""
+
+        return "\n".join(heading(p) + p.text for p in all_paragraphs(Document(path)))
     if path.suffix.lower() == ".pdf":
         import pymupdf as fitz
         from collections import Counter
@@ -635,17 +650,59 @@ def check_pack(workspace, directory):
         )
         latest_searches[key] = search
     if any(
-        s.get("complete") is False or s.get("status") in {"partial", "failed"}
+        (
+            s.get("complete") is False
+            and (
+                s.get("kind") != "local_inventory"
+                or s.get("truncated")
+                or s.get("missing_roots")
+                or s.get("processed") != s.get("discovered")
+            )
+        )
+        or s.get("status") in {"partial", "failed"}
         for s in latest_searches.values()
     ) or any(s["status"] in {"partial", "unreadable"} for s in data["sources"]):
         pending.append({"kind": "incomplete_source_coverage"})
     if not data["sources"]:
         pending.append({"kind": "source_coverage_not_checked"})
+    from utils.analysis_recipes import verify_calculation, calculated_result_current
+
     for calc in data["calculations"]:
-        # Host receipts describe an external calculation; they do not rerun it.
-        pending.append(
-            {"kind": "external_calculation_not_reproduced", "id": calc["id"]}
+        if not verify_calculation(calc):
+            (problems if calc.get("kind") == "local_recipe" else pending).append(
+                {"kind": "calculation_not_reproduced", "id": calc["id"]}
+            )
+        elif json.loads(Path(calc["output"]["path"]).read_text()).get("warnings"):
+            pending.append(
+                {"kind": "calculation_interpretation_needs_review", "id": calc["id"]}
+            )
+    for result in data["results"]:
+        if result.get("calculation_id"):
+            calc = next(
+                (
+                    c
+                    for c in data["calculations"]
+                    if c["id"] == result["calculation_id"]
+                ),
+                None,
+            )
+            if not calculated_result_current(result, calc):
+                problems.append(
+                    {"kind": "result_calculation_changed", "id": result["id"]}
+                )
+    journal_report = {"status": "not_checked"}
+    if spec.get("journal_profile"):
+        from utils.journal_checks import check_journal
+
+        journal_report = check_journal(
+            spec["journal_profile"],
+            manuscript,
+            data["figures"],
+            data.get("journal_reviews"),
         )
+        pending.extend(journal_report["findings"])
+    else:
+        pending.append({"kind": "journal_profile_not_selected"})
     if spec.get("stage") == "submission" and pending:
         problems.append({"kind": "unresolved_submission_checks"})
     files = {
@@ -664,6 +721,7 @@ def check_pack(workspace, directory):
         "pending": pending,
         "numeric_status": audit["status"],
         "coverage": coverage,
+        "journal": journal_report,
     }
 
 
