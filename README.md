@@ -12,6 +12,10 @@ recovery, tracked edits, conditional author questions, approved results, image
 provenance and checked Word/PDF review packs. The host-assisted route uses the
 current chat's retrieved evidence without making model API calls.
 
+[Workbook evidence and consistency checks](docs/workbook-evidence-review.md) covers
+native Excel extraction, claims linked to results, caption-label comparisons and
+explicit document history. These checks also work entirely offline.
+
 [REVIEW_WORKBENCH.md](REVIEW_WORKBENCH.md) covers the complete local review screen,
 OCR, reproducible aggregate analyses and journal checks. Networking is **offline by
 default**. An authorised live run must explicitly set `PAPER_NETWORK_MODE=online`;

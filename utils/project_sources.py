@@ -25,6 +25,8 @@ A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 NS = {"w": W[1:-1]}
 XML = E.XMLParser(resolve_entities=False, no_network=True)
 FORMATS = {
+    ".xlsx",
+    ".xlsm",
     ".docx",
     ".doc",
     ".pptx",
@@ -59,6 +61,8 @@ def package(path):
 def asset(raw, suffix, target, locator):
     sha = hashlib.sha256(raw).hexdigest()
     dst = target / (sha + suffix.lower())
+    if dst.exists() and hashlib.sha256(dst.read_bytes()).hexdigest() != sha:
+        raise ValueError("Extracted asset changed; preserve it and use a new workspace.")
     if not dst.exists():
         dst.write_bytes(raw)
     return dict(file_receipt(dst), locator=locator)
@@ -196,6 +200,10 @@ def extract(path, assets, *, converted=None, depth=0):
     suffix = path.suffix.lower()
     if depth > 3:
         raise ValueError("Nested attachment depth exceeded.")
+    if suffix in {".xlsx", ".xlsm"}:
+        from utils.workbook_sources import workbook_records
+
+        return workbook_records(path, assets)
     if suffix == ".doc":
         if converted is None:
             return [], [], [], ["legacy_conversion_required"]
@@ -391,7 +399,12 @@ def index_sources(workspace, roots, *, max_files=2000, convert=False, libreoffic
                     convert_legacy(p, converted, libreoffice)
                 record["conversion"] = file_receipt(converted)
             b, e, im, warnings = extract(p, assets, converted=converted)
+            if not current_file(record):
+                raise ValueError("Source changed during extraction; index again.")
             record.update(blocks=b, edits=e, images=im, warnings=warnings)
+            old = previous.get(record["id"], {})
+            if old.get("sha256") == record["sha256"] and old.get("provenance"):
+                record["provenance"] = old["provenance"]
             from utils.source_recovery import retain_ocr
 
             retain_ocr(previous.get(record["id"], {}), record)

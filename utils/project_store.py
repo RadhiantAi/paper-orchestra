@@ -106,4 +106,10 @@ def dependency_status(data):
         for s in data["sources"]
         if s.get("conversion") and not current_file(s["conversion"])
     ]
+    problems += [
+        {"id": s["id"], "status": "version_evidence_changed_or_missing"}
+        for s in data["sources"]
+        if s.get("provenance", {}).get("evidence")
+        and not current_file(s["provenance"]["evidence"])
+    ]
     return problems

@@ -154,6 +154,10 @@ def render_project(workspace):
                 format_func=lambda k: source_label(by_id[k]),
             )
             source = by_id[selected]
+            from frontend.evidence_screen import workbook_screen, provenance_screen
+
+            workbook_screen(workspace, source)
+            provenance_screen(workspace, source)
             left, right = st.columns(2)
             with left:
                 blocks = source.get("blocks", [])
@@ -269,6 +273,12 @@ def render_project(workspace):
                 ids[before], ids[after], data.get("edit_decisions")
             )
             st.code(report["diff"], language="diff")
+            st.write(report["change_report"])
+            st.download_button(
+                "Download version comparison",
+                json.dumps(report, indent=2),
+                file_name="version-comparison.json",
+            )
             if report["edits"]:
                 n = st.selectbox(
                     "Editorial point",
@@ -322,6 +332,9 @@ def render_project(workspace):
         from frontend.review_extensions import analysis_screen
 
         analysis_screen(workspace, data)
+        from frontend.evidence_screen import consistency_screen
+
+        consistency_screen(workspace, data)
     with figures:
         st.subheader("Figure checks")
         if data["figures"]:

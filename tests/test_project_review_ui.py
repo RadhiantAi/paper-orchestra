@@ -287,3 +287,83 @@ def test_interface_records_later_round_supersession(tmp_path):
     ).click().run(timeout=15)
     assert not app.exception and not app.error
     assert not coauthor_findings(load_project(w), "Later revision.")
+
+
+def test_workbook_ui_registers_literal_result(tmp_path):
+    from test_workbook_evidence import project
+    from utils.project_results import approved
+
+    w, p, s = project(tmp_path, formula=False, media=False)
+    app = AppTest.from_string(
+        "from frontend.project_review import render_project\nrender_project("
+        + repr(str(w))
+        + ")"
+    ).run(timeout=20)
+    assert not app.exception
+    next(x for x in app.selectbox if x.label == "Aggregate denominator cell").select(
+        "sheet:Counts!B1"
+    )
+    for label, value in [
+        ("Workbook result identifier", "r"),
+        ("Workbook result label", "Group"),
+    ]:
+        next(x for x in app.text_input if x.label == label).set_value(value)
+    next(
+        x for x in app.text_area if x.label == "What this count and denominator measure"
+    ).set_value("Detection")
+    next(x for x in app.button if x.label == "Register workbook aggregate").click().run(
+        timeout=20
+    )
+    assert not app.exception and not app.error
+    result = load_project(w)["results"][0]
+    assert result["count"] == 7 and result["denominator"] == 10 and not approved(result)
+
+
+def test_ui_maps_claim_and_records_baseline_provenance(tmp_path):
+    from test_manuscript_consistency import setup
+    from test_version_provenance import documents
+    from utils.coauthor_review import register_issued
+
+    w, baseline, returned = documents(tmp_path)
+    # Use a separate prepared results project and keep its source files private.
+    evidence = tmp_path / "claims"
+    setup(evidence)
+    issued = register_issued(evidence, baseline, "Legacy baseline")
+    app = AppTest.from_string(
+        "from frontend.project_review import render_project\nrender_project("
+        + repr(str(evidence))
+        + ")"
+    ).run(timeout=20)
+    next(x for x in app.text_input if x.label == "Claim identifier").set_value("rank")
+    next(x for x in app.text_area if x.label == "Exact claim paragraph").set_value(
+        "B had the highest specificity."
+    )
+    next(
+        x for x in app.multiselect if x.label == "Results included in the comparison"
+    ).select("a").select("b")
+    next(x for x in app.selectbox if x.label == "Result claimed to lead").select("b")
+    next(x for x in app.button if x.label == "Save claim mapping").click().run(
+        timeout=20
+    )
+    assert not app.exception and not app.error
+    assert load_project(evidence)["claims"][0]["result_id"] == "b"
+    next(x for x in app.selectbox if x.label == "Recorded baseline origin").select(
+        "reconstructed"
+    )
+    next(
+        x for x in app.text_input if x.label == "Evidence for this baseline's origin"
+    ).set_value(str(returned))
+    next(x for x in app.text_input if x.label == "Baseline history reviewer").set_value(
+        "Reviewer"
+    )
+    next(
+        x for x in app.text_area if x.label == "Reason for this baseline classification"
+    ).set_value("Compared original text with tracked return")
+    next(x for x in app.button if x.label == "Update baseline history").click().run(
+        timeout=20
+    )
+    assert not app.exception and not app.error
+    assert (
+        load_project(evidence)["issued_versions"][0]["provenance"]["kind"]
+        == "reconstructed"
+    )

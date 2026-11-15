@@ -55,7 +55,15 @@ def _copy(workspace, source, folder):
 
 
 def register_issued(
-    workspace, manuscript, label, parent_issued_id=None, reviewer="", reason=""
+    workspace,
+    manuscript,
+    label,
+    parent_issued_id=None,
+    reviewer="",
+    reason="",
+    *,
+    provenance="unknown",
+    evidence_file=None,
 ):
     if not label.strip():
         raise ValueError("Name the issued version.")
@@ -63,8 +71,23 @@ def register_issued(
         raise ValueError(
             "The issued baseline must have its tracked text changes resolved first."
         )
+    from utils.version_provenance import make_provenance
+
+    history = make_provenance(workspace, provenance, reviewer, reason, evidence_file)
+    if provenance == "reconstructed" and (
+        Path(evidence_file).suffix.lower() != ".docx"
+        or _paragraphs(evidence_file, True) != _paragraphs(manuscript)
+    ):
+        raise ValueError(
+            "Reconstructed baseline must match the tracked return's original-text view."
+        )
     receipt = _copy(workspace, manuscript, "issued")
-    record = {"id": receipt["sha256"], "label": label, "file": receipt}
+    record = {
+        "id": receipt["sha256"],
+        "label": label,
+        "file": receipt,
+        "provenance": history,
+    }
 
     def apply(data):
         if parent_issued_id is not None:
@@ -153,6 +176,9 @@ def import_return(workspace, issued_id, returned, owner):
         "file": receipt,
         "owner": owner,
         "base_verified": base_verified,
+        "base_text_matches": base_verified,
+        "baseline_provenance": issued.get("provenance", {}).get("kind", "unknown"),
+        "author_approval": False,
         "tracked_edits": edits,
         "items": items,
     }
@@ -351,6 +377,12 @@ def record_manual_reconciliation(
 def coauthor_findings(data, manuscript=None):
     findings = []
     for issued in data.get("issued_versions", []):
+        from utils.version_provenance import provenance_status
+
+        if provenance_status(issued) == "stale_evidence":
+            findings.append(
+                {"kind": "baseline_provenance_evidence_changed", "id": issued["id"]}
+            )
         try:
             ancestors(data, issued["id"])
         except ValueError:

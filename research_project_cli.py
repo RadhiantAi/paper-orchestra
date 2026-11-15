@@ -42,6 +42,39 @@ def main(argv=None):
     p.add_argument("--workspace", required=True)
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
+    a = sub.add_parser("workbook-result")
+    a.add_argument("source_id")
+    a.add_argument("--count-cell", required=True)
+    a.add_argument("--denominator-cell", required=True)
+    a.add_argument("--id", required=True)
+    a.add_argument("--label", required=True)
+    a.add_argument("--definition", required=True)
+    a = sub.add_parser("claim")
+    a.add_argument("mapping")
+    a = sub.add_parser("consistency-check")
+    a.add_argument("manuscript")
+    a.add_argument("--output", required=True)
+    a = sub.add_parser("consistency-review")
+    a.add_argument("manuscript")
+    a.add_argument("finding_id")
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
+    a = sub.add_parser("provenance")
+    a.add_argument("source_id")
+    a.add_argument(
+        "--kind",
+        choices=[
+            "unknown",
+            "confirmed_issued",
+            "reconstructed",
+            "published",
+            "working_draft",
+        ],
+        required=True,
+    )
+    a.add_argument("--evidence-file")
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
     a = sub.add_parser("backup")
     a.add_argument("--output", required=True)
     a.add_argument("--snapshot")
@@ -166,6 +199,44 @@ def main(argv=None):
     if c == "init":
         create_project(w)
         result = {"status": "created"}
+    elif c == "workbook-result":
+        from utils.workbook_sources import register_workbook_result
+
+        register_workbook_result(
+            w,
+            args.source_id,
+            args.count_cell,
+            args.denominator_cell,
+            args.id,
+            args.label,
+            args.definition,
+        )
+        result = {"status": "registered_not_approved"}
+    elif c == "claim":
+        from utils.manuscript_consistency import save_claim
+
+        save_claim(w, read(args.mapping))
+        result = {"status": "claim_mapping_saved"}
+    elif c == "consistency-check":
+        from utils.manuscript_consistency import audit_consistency
+
+        report = audit_consistency(load_project(w), doc_text(args.manuscript))
+        write_json(args.output, report)
+        result = {"status": report["status"], "findings": len(report["findings"])}
+    elif c == "consistency-review":
+        from utils.manuscript_consistency import review_finding
+
+        review_finding(
+            w, doc_text(args.manuscript), args.finding_id, args.reviewer, args.reason
+        )
+        result = {"status": "consistency_review_recorded"}
+    elif c == "provenance":
+        from utils.version_provenance import set_source_provenance
+
+        set_source_provenance(
+            w, args.source_id, args.kind, args.reviewer, args.reason, args.evidence_file
+        )
+        result = {"status": "version_provenance_recorded"}
     elif c == "backup":
         from utils.project_recovery import backup_project
 
@@ -337,7 +408,8 @@ def main(argv=None):
     # Counts/status only. Never print source contents or recognised patient identifiers.
     print(json.dumps(result, indent=2))
     if result.get("status") in {"failed", "incomplete", "blocked"} or (
-        c == "journal-check" and result.get("status") != "checked"
+        c in {"journal-check", "consistency-check"}
+        and result.get("status") != "checked"
     ):
         raise SystemExit(1)
 

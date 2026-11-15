@@ -5,7 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import json
 import re
 
-from utils.project_store import require_text, unique, private_path
+from utils.project_store import require_text, unique, private_path, current_file
 from utils.research_quality import fingerprint
 
 
@@ -25,10 +25,16 @@ def validate_result(r):
     precision = r.get("precision", 1)
     if type(precision) is not int or not 0 <= precision <= 4:
         raise ValueError("Precision must be between zero and four.")
+    if "participants" in r and (
+        type(r["participants"]) is not int or r["participants"] < 1
+    ):
+        raise ValueError("Participant count must be a positive integer.")
 
 
 def approved(r):
     validate_result(r)
+    if r.get("workbook_source") and not current_file(r["workbook_source"]):
+        return False
     a = r.get("approval", {})
     return bool(
         a.get("reviewer") and a.get("reason") and a.get("identity") == value_identity(r)
@@ -40,6 +46,8 @@ def approve_results(records, reviewer, reason):
         raise ValueError("Named reviewer and approval reason required.")
     for r in records:
         validate_result(r)
+        if r.get("workbook_source") and not current_file(r["workbook_source"]):
+            raise ValueError("Workbook changed; reindex and register the result again.")
         r["approval"] = {
             "identity": value_identity(r),
             "reviewer": reviewer,
@@ -56,6 +64,20 @@ def percentage(r):
         ),
         "f",
     )
+
+
+def set_result_design(workspace, result_id, metric, participants):
+    from utils.project_store import update_project
+
+    require_text({"metric": metric}, "metric")
+
+    def apply(data):
+        row = next(r for r in data["results"] if r["id"] == result_id)
+        row.update(metric=metric, participants=participants)
+        validate_result(row)
+        # Existing approval is retained in history but no longer matches the result.
+
+    return update_project(workspace, apply)
 
 
 def render_results(template, records):

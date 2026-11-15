@@ -141,7 +141,10 @@ def compare_versions(before, after, decisions=None):
         else:
             status = "unresolved"
         rows.append({"fingerprint": key, "edit": edit, "status": status})
+    from utils.version_provenance import change_report
+
     return {
+        "change_report": change_report(before, after),
         "before": before["id"],
         "after": after["id"],
         "edits": rows,
