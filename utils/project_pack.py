@@ -164,6 +164,40 @@ def image_pixel_hash(blob):
         return None
 
 
+def referenced_word_images(path):
+    """Yield images referenced by Word content, excluding orphaned package media.
+
+    Main-document pictures and explicitly referenced headers/footers are covered.
+    This establishes a content reference, not correct placement or rendered fidelity.
+    Privacy checks deliberately still inspect every media part, including orphans.
+    """
+    from docx.oxml.ns import qn
+
+    doc = Document(path)
+    parts = [doc.part]
+    for node in doc._element.xpath(".//w:headerReference | .//w:footerReference"):
+        part = doc.part.related_parts.get(node.get(qn("r:id")))
+        if part is not None:
+            parts.append(part)
+    seen = set()
+    for part in parts:
+        for node in part.element.iter():
+            if node.tag == qn("a:blip"):
+                rid = node.get(qn("r:embed"))
+            elif node.tag == "{urn:schemas-microsoft-com:vml}imagedata":
+                rid = node.get(qn("r:id"))
+            else:
+                continue
+            if any(ancestor.tag == qn("w:del") for ancestor in node.iterancestors()):
+                continue
+            image = part.related_parts.get(rid)
+            if image is not None and image.content_type.startswith("image/"):
+                key = str(image.partname)
+                if key not in seen:
+                    seen.add(key)
+                    yield image.blob
+
+
 def doc_text(path):
     path = Path(path)
     if path.suffix.lower() == ".docx":
@@ -516,6 +550,7 @@ def check_pack(workspace, directory):
         pending.append({"kind": "statistical_plot_derivation_not_checked"})
     # Include embedded Office image bytes when looking for known unmasked originals.
     asset_hashes, pixel_hashes = set(), set()
+    present_hashes, present_pixels = set(), set()
     import hashlib
 
     for f in directory.rglob("*"):
@@ -523,12 +558,21 @@ def check_pack(workspace, directory):
             asset_hashes.add(digest(f))
             if f.suffix.lower() in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}:
                 pixel_hashes.add(image_pixel_hash(f.read_bytes()))
+                present_hashes.add(digest(f))
+                present_pixels.add(image_pixel_hash(f.read_bytes()))
             if f.suffix.lower() in {".docx", ".pptx"}:
                 with zipfile.ZipFile(f) as z:
                     for n in z.namelist():
                         if "/media/" in n:
                             asset_hashes.add(hashlib.sha256(z.read(n)).hexdigest())
                             pixel_hashes.add(image_pixel_hash(z.read(n)))
+                            if f.suffix.lower() == ".pptx":
+                                present_hashes.add(hashlib.sha256(z.read(n)).hexdigest())
+                                present_pixels.add(image_pixel_hash(z.read(n)))
+                if f.suffix.lower() == ".docx":
+                    for blob in referenced_word_images(f):
+                        present_hashes.add(hashlib.sha256(blob).hexdigest())
+                        present_pixels.add(image_pixel_hash(blob))
             if f.suffix.lower() == ".pdf":
                 import pymupdf as fitz
 
@@ -537,6 +581,10 @@ def check_pack(workspace, directory):
                         blob = pdf.extract_image(xref)["image"]
                         asset_hashes.add(hashlib.sha256(blob).hexdigest())
                         pixel_hashes.add(image_pixel_hash(blob))
+                        # Resource dictionaries can retain images that are never painted.
+                        if any(page.get_image_rects(xref) for page in pdf):
+                            present_hashes.add(hashlib.sha256(blob).hexdigest())
+                            present_pixels.add(image_pixel_hash(blob))
     for fig in data["figures"]:
         if manuscript.count(fig["caption"]) != 1:
             problems.append({"kind": "caption_mismatch", "id": fig["id"]})
@@ -570,8 +618,8 @@ def check_pack(workspace, directory):
             display_pixels = (
                 image_pixel_hash(display.read_bytes()) if display.is_file() else None
             )
-            if p["display"]["sha256"] not in asset_hashes and not (
-                display_pixels and display_pixels in pixel_hashes
+            if p["display"]["sha256"] not in present_hashes and not (
+                display_pixels and display_pixels in present_pixels
             ):
                 problems.append(
                     {
