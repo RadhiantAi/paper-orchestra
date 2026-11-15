@@ -32,7 +32,7 @@ SKIP = {
 
 def _receipts(value, key=""):
     # Allocation is an inventory, not permission to ingest withheld originals.
-    if key == "source_allocations":
+    if key in {"source_allocations", "allocation_history"}:
         return
     if isinstance(value, dict):
         if (
@@ -72,9 +72,16 @@ def snapshot(workspace, data):
             if name not in SKIP and not name.startswith(".env.")
         )
     missing = []
+    scanned = set(paths)
+    if data.get("strict_trial", {}).get("enabled"):
+        # Do not sweep stray/unallocated files into a blinded project's archive.
+        paths = {root / "project.json"}
     for receipt in _receipts(data):
         path = Path(receipt["path"])
         if path.is_file():
+            if data.get("strict_trial", {}).get("enabled") and digest(path) != receipt["sha256"]:
+                missing.append(receipt["path"])
+                continue
             paths.add(path)
         else:
             missing.append(receipt["path"])
@@ -126,6 +133,8 @@ def snapshot(workspace, data):
         "workspace": str(root),
         "files": entries,
         "missing": sorted(set(missing)),
+        "strict_registered_files_only": bool(data.get("strict_trial", {}).get("enabled")),
+        "unregistered_files_excluded": len(scanned - paths),
         "complete": not missing,
         "scope": "Private recovery archive. Tool executables, secrets and earlier snapshot history are excluded.",
     }

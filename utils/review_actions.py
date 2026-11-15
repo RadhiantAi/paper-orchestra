@@ -13,6 +13,11 @@ from utils.run_control import digest
 
 
 def save_uploads(workspace, uploads):
+    from utils.strict_trial import admit
+    data = load_project(workspace)
+    uploads = list(uploads)
+    for name, blob in uploads:
+        admit(data, hashlib.sha256(blob).hexdigest())
     directory = private_path(workspace) / "uploads"
     directory.mkdir(exist_ok=True)
     paths = []
@@ -32,7 +37,11 @@ def save_uploads(workspace, uploads):
                 f.write(blob)
         paths.append(target)
         names[str(target.resolve())] = re.split(r"[\\/]", name)[-1]
-    update_project(workspace, lambda d: d.setdefault("upload_names", {}).update(names))
+    def save(data):
+        from utils.strict_trial import register_derived
+        data.setdefault("upload_names", {}).update(names)
+        register_derived(data, paths, "admitted_upload")
+    update_project(workspace, save)
     return paths
 
 

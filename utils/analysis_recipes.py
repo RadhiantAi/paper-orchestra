@@ -173,6 +173,8 @@ def calculate(recipe, rows):
 
 
 def run_recipe(workspace, recipe, source, output, reviewer, reason):
+    from utils.strict_trial import admit_file
+    admit_file(workspace, source)
     if not reviewer.strip() or not reason.strip():
         raise ValueError("Reviewer and reason required for a calculation run.")
     source = Path(source)

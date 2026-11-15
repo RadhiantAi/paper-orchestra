@@ -40,6 +40,8 @@ def _paragraphs(path, original=False):
 
 
 def _copy(workspace, source, folder):
+    from utils.strict_trial import admit_file
+    admit_file(workspace, source)
     source = Path(source)
     if source.suffix.lower() != ".docx":
         raise ValueError("Select a Word document.")
@@ -67,6 +69,10 @@ def register_issued(
 ):
     if not label.strip():
         raise ValueError("Name the issued version.")
+    from utils.strict_trial import admit_file
+    admit_file(workspace, manuscript)
+    if evidence_file:
+        admit_file(workspace, evidence_file)
     if _paragraphs(manuscript, True) != _paragraphs(manuscript):
         raise ValueError(
             "The issued baseline must have its tracked text changes resolved first."
@@ -327,6 +333,8 @@ def apply_returned_edits(workspace, issued_id, destination):
 def record_manual_reconciliation(
     workspace, issued_id, manuscript, item_ids, reviewer, reason
 ):
+    from utils.strict_trial import admit_file
+    admit_file(workspace, manuscript)
     if Path(manuscript).suffix.lower() != ".docx":
         raise ValueError("Select a reconciled Word document.")
     if not item_ids or not reviewer.strip() or not reason.strip():

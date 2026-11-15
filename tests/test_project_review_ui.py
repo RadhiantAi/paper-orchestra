@@ -3,6 +3,20 @@ from utils.project_store import create_project, load_project
 from utils.project_review import import_host, query_status
 
 
+def test_strict_trial_and_legacy_controls_are_available_offline(tmp_path):
+    create_project(tmp_path)
+    app = AppTest.from_string(
+        "from frontend.project_review import render_project\nrender_project(" + repr(str(tmp_path)) + ")"
+    ).run(timeout=15)
+    assert not app.exception
+    assert any(x.label == "Preserve, convert and compare workbook" for x in app.button)
+    next(x for x in app.text_input if x.label == "Trial decision reviewer").set_value("Reviewer")
+    next(x for x in app.text_input if x.label == "Trial decision reason").set_value("Synthetic protocol")
+    next(x for x in app.button if x.label == "Enable strict mode on this new project").click().run()
+    assert not app.exception
+    assert load_project(tmp_path)["strict_trial"]["enabled"]
+
+
 def test_project_queries_are_recorded_without_clearing_conditions(tmp_path):
     create_project(tmp_path)
     import_host(

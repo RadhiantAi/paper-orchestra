@@ -57,6 +57,10 @@ def project_home():
             st.rerun()
     with st.expander("Create a project"):
         name = st.text_input("New project name")
+        strict = st.checkbox("Start a strict blinded trial")
+        if strict:
+            strict_who = st.text_input("Trial setup reviewer")
+            strict_why = st.text_input("Trial setup reason")
         if st.button("Create and open project"):
 
             def create():
@@ -65,7 +69,12 @@ def project_home():
                         "Use a simple project name without slashes or dots."
                     )
                 path = private_path(Path(root) / name)
+                if strict and (not strict_who.strip() or not strict_why.strip()):
+                    raise ValueError("Record the trial setup reviewer and reason.")
                 create_project(path)
+                if strict:
+                    from utils.strict_trial import enable_strict_trial
+                    enable_strict_trial(path, strict_who, strict_why)
                 return path
 
             path = action(create)

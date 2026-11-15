@@ -251,6 +251,8 @@ def import_host(workspace, payload):
 
     def apply(data):
         draft = deepcopy(data)
+        from utils.strict_trial import admit_host
+        admit_host(data, payload)
         unique(payload.get("sources", []))
         for r in payload.get("sources", []):
             require_text(r, "id", "sha256", "origin", "status")

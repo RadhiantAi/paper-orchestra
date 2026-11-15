@@ -56,15 +56,103 @@ choose `trial_input`, `withheld_reference`, `uncertain`, `excluded` or
 `candidate_primary`. Only an explicit `trial_input` allocation allows the native
 indexer to ingest a source already in this allocation register. Matching copies
 are checked by hash as well as path. Previously indexed content cannot be relabelled
-as withheld; a new blind workspace is needed. Unregistered inputs retain the
-existing indexing behaviour. Host-imported evidence needs a separate exposure log.
+as withheld; a new blind workspace is needed. Normal projects retain the existing
+behaviour for unregistered inputs. Opt-in strict projects use the gates below.
 
 Allocation records are metadata and do not cause external originals to enter
 backups. Keep withheld, excluded and uncertain originals outside the project.
-Backups include files physically inside the project, so copying a withheld file
-there would expose it. Selected sources enter recovery through normal indexing.
+Normal-project backups include files physically inside the project, so copying a
+withheld file there would expose it. Strict backups collect registered receipts
+only and report excluded stray files. Selected sources enter recovery through indexing.
 Changed files invalidate their allocation, and unresolved allocations remain pack
 review items. A source role is neither scientific approval nor proof of completeness.
+
+## Strict blinded-trial mode
+
+Choose **Start a strict blinded trial** when creating a project, or run:
+
+```text
+python research_project_cli.py --workspace PRIVATE_PROJECT init
+python research_project_cli.py --workspace PRIVATE_PROJECT strict-trial --reviewer "Trial reviewer" --reason "Approved blinded protocol"
+python research_project_cli.py --workspace PRIVATE_PROJECT allocate-source INPUT --role trial_input --reviewer "Trial reviewer" --reason "Protocol input"
+```
+
+Enable strict mode before any content is imported or copied into the project.
+There is no disable operation. Intake rejects unknown bytes, changed files and
+renamed copies of withheld sources. Uploads, local indexing, analysis inputs,
+co-author documents, provenance evidence, OCR and pack inputs use the gate.
+Extracted media inherit their admitted container's provenance; email attachments
+need their own allocation before extraction. Derived pack files are registered
+and changed copies require a fresh allocation/build. Metadata-only structure
+inspection and allocation remain available before admission.
+
+Host imports need two decisions: each source's declared SHA256/origin and the
+complete exchange's canonical fingerprint. The exchange origin is
+`host-exchange:HOST`, where HOST exactly matches its `host` field. A coordinating
+reviewer computes the fingerprint using `utils.research_quality.fingerprint` on
+the parsed JSON, then supplies that digest without exposing withheld content to
+the trial operator. Use **Record host allocation** or `allocate-host ORIGIN SHA256
+--role trial_input --reviewer REVIEWER --reason REASON`. Nested local file receipts
+are verified and admitted individually. Changing text while retaining a declared
+source hash invalidates the exchange decision. Host digests remain declarations,
+not independent proof that a remote source was retrieved faithfully.
+
+Allocation history is retained as metadata and excluded from file collection.
+Reclassifying a withheld source as an input records `unblinded_at`; strict intake
+continues, but the project is no longer represented as never unblinded. Restores
+retain the mode, history and roles. Strict snapshots exclude stray files and mark
+changed registered files missing rather than copying unapproved replacement bytes.
+This also means loose, unregistered drafts are not included in strict backups.
+
+These are supported application intake controls, not an operating-system sandbox
+or a guarantee about previous human/chat exposure. Keep a separate exposure log
+for external tools, manual edits, literature searches and anything read outside
+the project. Direct Python helpers, filesystem edits and source allocations made
+by an operator do not establish an independently supervised blind trial.
+
+## Controlled legacy Excel conversion
+
+Use **Convert a legacy Excel workbook with checks**, or:
+
+```text
+python research_project_cli.py --workspace PRIVATE_PROJECT convert-workbook ORIGINAL.xls --output NEW_PRIVATE_FOLDER --reviewer REVIEWER --reason "Preserve and check legacy data"
+```
+
+This initial route requires installed Microsoft Excel on Windows. It accepts
+bounded BIFF8/OLE workbooks with ordinary worksheets. Preflight rejects encryption,
+VBA and Excel 4 macro sheets, defined names/named formulas, external supporting
+books, query tables, connections and embedded objects. Unsupported files require
+manual review; they are never silently converted by the indexer. Files are limited
+to 32 MB and 100,000 inspected cells. No live models or external conversion service
+are used.
+
+The original is copied unchanged. Excel opens the copy read-only with links,
+events, automatic calculation and VBA macros disabled. An independent XLS reader
+captures stored values before Excel opens it. Checks compare that cache with the
+opened workbook, then compare Excel's source and converted representations for
+values, formulas, number formats, sheet names/order/visibility and date system.
+Numeric tolerance is 1e-12 relative and absolute. Formula text is compared as Excel
+interprets it; this is not a byte-level proof of identical BIFF formula tokens.
+Excel 4 controls use preflight because Office's VBA automation setting alone does
+not disable Excel 4 macros.
+
+The private output contains the preserved XLS, XLSX, before/after audit, comparison
+and hashed receipt with Excel version and settings. Errors and changed values
+leave a failed output folder for inspection and do not register a verified
+conversion. Cleanup targets only the new Excel process identified by its ID and
+start time, leaving pre-existing Excel processes alone. Original inputs remain
+untouched. This is a narrow conversion route, not a general malware sandbox.
+
+After conversion, index the original XLS; the indexer follows its verified XLSX
+receipt. Strict mode requires a separate allocation for the converted XLSX first.
+Changed conversion artefacts invalidate the receipt. Backups preserve the original,
+conversion and checks. Layout, charts, visual presentation and scientific meaning
+remain human checks; the source retains a visual-review warning and cannot receive
+automatic submission clearance. The private cell audit may contain research data.
+
+Implementation references: [Excel automation security](https://learn.microsoft.com/en-us/office/vba/api/excel.application.automationsecurity),
+[workbook opening controls](https://learn.microsoft.com/en-us/office/vba/api/excel.workbooks.open),
+[BIFF sheet types](https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-xls/b9ec509a-235d-424e-871d-f8e721106501).
 
 ## Continuous measurements
 
@@ -93,6 +181,42 @@ causal inference or automatic model selection. Analysis output contains aggregat
 results, not unit IDs; the private input snapshot and recovery archive contain
 the supplied measurements and need appropriate protection. The recipe does not
 populate the count/denominator register or approve scientific conclusions.
+
+### Bind continuous values to prose and tables
+
+Use **Link continuous calculations to manuscript values** to choose a group,
+variable/model, field, coefficient and rounding precision. The CLI equivalent is
+`continuous-result CALCULATION_ID SELECTOR.json --id ID --label LABEL --definition
+DEFINITION --precision 2`. A pooled summary selector looks like:
+
+```json
+{"kind": "summary", "group": null, "variable": "x", "field": "mean"}
+```
+
+Model selectors also require `outcome` and the ordered `predictors`; coefficient
+fields require `coefficient`, including `intercept`. Supported values include
+means, SDs, ranges, bootstrap intervals, counts, coefficients and their intervals,
+R squared and leave-one-out errors. Non-estimable/non-finite values are rejected.
+The register retains the calculation, field, units and precision. A technical
+reviewer must record their check with **Record continuous result technical review**
+or `review-continuous --ids ID --reviewer REVIEWER --reason REASON`. This does not
+grant author approval or endorse the scientific interpretation.
+
+Use `{{continuous:ID:value}}` in Word prose or table cells. The pack replaces it
+using fixed decimal places and half-up rounding. Intervals render as `lower to
+upper`. Add an explicit `continuous_mappings` entry for each expected passage:
+
+```json
+{"id": "mean-x", "template": "Mean: {{continuous:mean-x:value}} mm", "document": "manuscript", "occurrences": 1}
+```
+
+The target can be a role or exact pack filename. Specify every repeated passage
+and expected occurrence count. Missing mappings, wrong target documents, changed
+numbers, stale calculations or missing technical reviews block pack release.
+Re-registering a value clears its previous review. Changes to input, method,
+calculation code or output require recalculation and renewed review. This checks
+only mapped literal occurrences; unrelated numbers, chart labels and statistical
+interpretation remain outside its scope. Existing count-result checks are unchanged.
 
 The new code fingerprint intentionally invalidates older local calculation
 receipts; rerun them with their recorded input and method in a new output folder.

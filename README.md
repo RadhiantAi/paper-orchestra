@@ -125,3 +125,9 @@ aggregate numerical checks, evidence review, controlled revisions, paginated
 discovery, optional read-only web/Zotero/MCP adapters, PMC passages and publication
 status checks. The chat-assisted exchange can review a manuscript without model
 API calls. Keep private research inputs outside this public checkout.
+
+The [offline trial guide](docs/blinded-trial-checks.md) covers strict blinded
+intake, calculation-linked continuous values in Word prose/tables, and controlled
+legacy XLS conversion. These are available in the review interface and project
+CLI. Strict mode is opt-in for new projects; XLS conversion currently requires
+installed Excel on Windows. Visual and scientific review remain human decisions.
