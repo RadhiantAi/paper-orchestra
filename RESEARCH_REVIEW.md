@@ -1,5 +1,9 @@
 # Research review and connected discovery
 
+For source files, earlier tracked changes, figure provenance and checked Word/PDF
+packs, use the project workflow in [PROJECT_WORKFLOW.md](PROJECT_WORKFLOW.md).
+The simpler Markdown section-review commands below remain supported.
+
 These additions support a researcher checking a draft. A passing numerical check,
 source lookup or benchmark does not establish scientific validity or readiness for submission.
 

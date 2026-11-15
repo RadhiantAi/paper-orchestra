@@ -7,6 +7,11 @@
 
 This fork supports OpenAI, Anthropic, Gemini and OpenAI-compatible endpoints. Writing, review and literature ranking can use different models. It removes generated-code execution and automatic email delivery. Outputs require human review.
 
+For existing manuscripts, [PROJECT_WORKFLOW.md](PROJECT_WORKFLOW.md) covers source
+recovery, tracked edits, conditional author questions, approved results, image
+provenance and checked Word/PDF review packs. The host-assisted route uses the
+current chat's retrieved evidence without making model API calls.
+
 Read [RELIABILITY.md](RELIABILITY.md) for setup, saved runs, spending limits and verification; [DISCOVERY.md](DISCOVERY.md) covers literature sources. [FORK_NOTES.md](FORK_NOTES.md) summarises the fork. The upstream authors listed above created PaperOrchestra; this fork is independently modified.
 
 

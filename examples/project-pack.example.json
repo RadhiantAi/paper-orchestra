@@ -1,0 +1,12 @@
+{
+  "stage": "coauthor_review",
+  "apply_reviews": true,
+  "render": true,
+  "generate_figures": false,
+  "files": [
+    {"role": "manuscript", "name": "Manuscript.docx", "path": "C:/private/inputs/Manuscript.docx", "sha256": "REPLACE_WITH_REAL_FILE_HASH"},
+    {"role": "title_page", "name": "TitlePage.docx", "path": "C:/private/inputs/TitlePage.docx", "sha256": "REPLACE_WITH_REAL_FILE_HASH", "preserve": true}
+  ],
+  "result_mappings": [{"id": "region", "template": "Synthetic region: {{result:region:pair}}.", "occurrences": 1}],
+  "result_assets": []
+}
