@@ -144,6 +144,8 @@ def allocate_source(workspace, path, role, reviewer, reason):
             raise ValueError(
                 "Source already indexed: do not label exposed content as withheld. Start a separate blind workspace."
             )
+        from utils.strict_trial import record_allocation_change
+        record_allocation_change(data, row)
         data["source_allocations"] = [
             r for r in data.get("source_allocations", []) if r["id"] != row["id"]
         ] + [row]
@@ -154,7 +156,7 @@ def allocate_source(workspace, path, role, reviewer, reason):
 def allocation_findings(data):
     findings = []
     for row in data.get("source_allocations", []):
-        if not current_file(row["source"]):
+        if row["source"].get("path") and not current_file(row["source"]):
             findings.append({"kind": "source_allocation_stale", "id": row["id"]})
         if row["role"] in {"uncertain", "candidate_primary"}:
             findings.append(

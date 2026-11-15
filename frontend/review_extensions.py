@@ -16,9 +16,11 @@ def source_recovery(workspace, data):
     from utils.source_recovery import source_inventory, recover_ocr, confirm_ocr
 
     from utils.source_structure import inspect_structure, allocate_source, ROLES, allocation_findings
+    from frontend.trial_controls import intake_controls
+    intake_controls(workspace, data)
     with st.expander("Review workbook structure before choosing trial sources"):
         st.caption("Inspect occupancy and cell types without displaying values. Keep withheld originals outside this project. Structural clues do not prove a source is primary data.")
-        path = st.text_input("Original workbook path outside the project")
+        path = st.text_input("Original source path outside the project")
         if st.button("Inspect workbook structure"):
             report = action(lambda: inspect_structure(path), "Structure inspected; choose its role after review.")
             if report:
@@ -86,6 +88,8 @@ def source_recovery(workspace, data):
 def analysis_screen(workspace, data):
     from frontend.project_review import action
     from utils.analysis_recipes import run_recipe, register_proportions
+    from frontend.trial_controls import continuous_controls
+    continuous_controls(workspace, data)
 
     with st.expander("Run a reproducible analysis"):
         st.caption(
@@ -194,6 +198,10 @@ def analysis_screen(workspace, data):
         }
         if calculations:
             cid = st.selectbox("Calculation to inspect", list(calculations))
+            from utils.analysis_recipes import verify_calculation
+            if not verify_calculation(calculations[cid]):
+                st.error("Calculation files changed. Re-run the analysis before inspecting it here.")
+                return
             output = action(
                 lambda: json.loads(
                     Path(calculations[cid]["output"]["path"]).read_text()
@@ -281,6 +289,9 @@ def journal_screen(workspace, data):
             action(save, "Journal requirements saved. Refresh to use them.")
     manuscript = st.text_input("Manuscript for journal checks")
     if manuscript:
+        from utils.strict_trial import admit_file
+        if action(lambda: (admit_file(workspace, manuscript), True)[1], "Input checked.") is None:
+            return
         text = action(lambda: doc_text(manuscript), "Manuscript opened locally.")
         if text is not None:
             st.write(discussion_coverage(data, text))
@@ -336,6 +347,9 @@ def figure_editor(workspace, data):
         who = st.text_input("Mask authorised by")
         why = st.text_input("Masking reason")
         if st.button("Create masked copy"):
+            from utils.strict_trial import admit_file
+            if action(lambda: (admit_file(workspace, original), True)[1], "Input checked.") is None:
+                return
             action(
                 lambda: mask_image(
                     original,

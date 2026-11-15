@@ -178,7 +178,8 @@ def consistency_screen(workspace, data):
             workspace, "Manuscript for consistency checks", "consistency_manuscript"
         )
         if manuscript:
-            text = action(lambda: doc_text(manuscript), "Manuscript read locally.")
+            from utils.strict_trial import admit_file
+            text = action(lambda: (admit_file(workspace, manuscript), doc_text(manuscript))[1], "Manuscript read locally.")
             if text is not None:
                 report = audit_consistency(data, text)
                 st.write(report)

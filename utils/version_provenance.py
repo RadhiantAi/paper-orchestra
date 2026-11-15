@@ -31,6 +31,8 @@ def make_provenance(workspace, kind, reviewer, reason, evidence_file=None):
             "Supply the supporting sent record, tracked return or publication."
         )
     if evidence_file:
+        from utils.strict_trial import admit_file
+        admit_file(workspace, evidence_file)
         receipt = file_receipt(evidence_file)
         if receipt["bytes"] > 200 * 1024**2:
             raise ValueError("Evidence file exceeds the size budget.")

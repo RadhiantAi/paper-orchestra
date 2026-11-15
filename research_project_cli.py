@@ -42,6 +42,31 @@ def main(argv=None):
     p.add_argument("--workspace", required=True)
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
+    a = sub.add_parser("strict-trial")
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
+    a = sub.add_parser("allocate-host")
+    a.add_argument("origin")
+    a.add_argument("sha256")
+    a.add_argument("--role", required=True, choices=["candidate_primary", "trial_input", "withheld_reference", "uncertain", "excluded"])
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
+    a = sub.add_parser("convert-workbook")
+    a.add_argument("source")
+    a.add_argument("--output", required=True)
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
+    a = sub.add_parser("continuous-result")
+    a.add_argument("calculation_id")
+    a.add_argument("selector", help="JSON selector file")
+    a.add_argument("--id", required=True)
+    a.add_argument("--label", required=True)
+    a.add_argument("--definition", required=True)
+    a.add_argument("--precision", type=int, default=2)
+    a = sub.add_parser("review-continuous")
+    a.add_argument("--ids", nargs="+", required=True)
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
     a = sub.add_parser("source-structure")
     a.add_argument("source")
     a.add_argument("--output", required=True)
@@ -209,11 +234,40 @@ def main(argv=None):
     args = p.parse_args(argv)
     w = args.workspace
     c = args.command
+    from utils.strict_trial import admit_file
+    # Structure/allocation inspect metadata only; all other direct evidence readers
+    # must admit external files before opening their contents.
+    if (Path(w) / "project.json").exists() and c not in {"init", "restore", "allocate-source", "source-structure"}:
+        for field in ["manuscript", "document", "image", "correction_file"]:
+            if getattr(args, field, None):
+                admit_file(w, getattr(args, field))
+        for path in getattr(args, "candidates", []):
+            admit_file(w, path)
     if getattr(args, "output", None):
         private_path(args.output)
     if c == "init":
         create_project(w)
         result = {"status": "created"}
+    elif c == "strict-trial":
+        from utils.strict_trial import enable_strict_trial
+        enable_strict_trial(w, args.reviewer, args.reason)
+        result = {"status": "strict_trial_enabled"}
+    elif c == "allocate-host":
+        from utils.strict_trial import allocate_host
+        allocate_host(w, args.origin, args.sha256, args.role, args.reviewer, args.reason)
+        result = {"status": "host_allocation_recorded"}
+    elif c == "convert-workbook":
+        from utils.legacy_workbooks import convert_workbook
+        record = convert_workbook(w, args.source, args.output, args.reviewer, args.reason)
+        result = {"status": record["status"], "visual_review_required": True}
+    elif c == "continuous-result":
+        from utils.continuous_results import register_continuous
+        register_continuous(w, args.id, args.calculation_id, read(args.selector), args.label, args.definition, args.precision)
+        result = {"status": "registered_needs_technical_review"}
+    elif c == "review-continuous":
+        from utils.continuous_results import review_continuous
+        review_continuous(w, args.ids, args.reviewer, args.reason)
+        result = {"status": "technically_reviewed_not_author_approved"}
     elif c == "workbook-result":
         from utils.workbook_sources import register_workbook_result
 

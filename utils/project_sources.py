@@ -25,6 +25,7 @@ A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 NS = {"w": W[1:-1]}
 XML = E.XMLParser(resolve_entities=False, no_network=True)
 FORMATS = {
+    ".xls",
     ".xlsx",
     ".xlsm",
     ".docx",
@@ -196,7 +197,7 @@ def convert_legacy(source, destination, libreoffice=None):
     return file_receipt(destination)
 
 
-def extract(path, assets, *, converted=None, depth=0):
+def extract(path, assets, *, converted=None, depth=0, admission=None):
     suffix = path.suffix.lower()
     if depth > 3:
         raise ValueError("Nested attachment depth exceeded.")
@@ -204,6 +205,12 @@ def extract(path, assets, *, converted=None, depth=0):
         from utils.workbook_sources import workbook_records
 
         return workbook_records(path, assets)
+    if suffix == ".xls":
+        if converted is None:
+            return [], [], [], ["controlled_workbook_conversion_required"]
+        from utils.workbook_sources import workbook_records
+        b, e, i, warnings = workbook_records(converted, assets)
+        return b, e, i, warnings + ["legacy_workbook_visual_review_required"]
     if suffix == ".doc":
         if converted is None:
             return [], [], [], ["legacy_conversion_required"]
@@ -302,12 +309,14 @@ def extract(path, assets, *, converted=None, depth=0):
             name = part.get_filename()
             if name:
                 suffix = Path(name).suffix.lower()
+                if admission:
+                    admission(hashlib.sha256(raw).hexdigest())
                 dst = assets / (hashlib.sha256(raw).hexdigest() + suffix)
                 dst.write_bytes(raw)
                 if suffix not in FORMATS:
                     warnings.append(f"attachment:{n}:unsupported_format:{suffix}")
                     continue
-                b, e, im, w = extract(dst, assets, depth=depth + 1)
+                b, e, im, w = extract(dst, assets, depth=depth + 1, admission=admission)
                 for item in b + e + im:
                     item["locator"] = f"attachment:{n}/" + item["locator"]
                 blocks.extend(b)
@@ -370,9 +379,13 @@ def index_sources(workspace, roots, *, max_files=2000, convert=False, libreoffic
     )
     records = []
     project = load_project(workspace)
+    from utils.strict_trial import admit
+    if project.get("strict_trial", {}).get("enabled"):
+        for path in paths[:max_files]:
+            admit(project, file_receipt(path)["sha256"], path=path)
     restricted = [r for r in project.get("source_allocations", []) if r["role"] != "trial_input"]
     for path in paths[:max_files]:
-        if any(Path(r["source"]["path"]).resolve() == path.resolve() or
+        if any((r["source"].get("path") and Path(r["source"]["path"]).resolve() == path.resolve()) or
                file_receipt(path)["sha256"] == r["source"]["sha256"] for r in restricted):
             raise ValueError("An allocated source needs an explicit trial-input decision before indexing.")
     previous = {s["id"]: s for s in project["sources"]}
@@ -392,6 +405,12 @@ def index_sources(workspace, roots, *, max_files=2000, convert=False, libreoffic
                 raise ValueError("Symlink or file size budget exceeded.")
             record.update(file_receipt(p))
             converted = None
+            if p.suffix.lower() == ".xls":
+                from utils.legacy_workbooks import verified_conversion
+                receipt = verified_conversion(project, record)
+                admit(project, receipt["sha256"], path=receipt["path"])
+                converted = Path(receipt["path"])
+                record["conversion"] = receipt
             if p.suffix.lower() == ".doc" and convert:
                 converted = assets / (record["sha256"] + ".docx")
                 if converted.exists():
@@ -403,7 +422,8 @@ def index_sources(workspace, roots, *, max_files=2000, convert=False, libreoffic
                 else:
                     convert_legacy(p, converted, libreoffice)
                 record["conversion"] = file_receipt(converted)
-            b, e, im, warnings = extract(p, assets, converted=converted)
+            b, e, im, warnings = extract(p, assets, converted=converted,
+                                         admission=lambda sha: admit(project, sha))
             if not current_file(record):
                 raise ValueError("Source changed during extraction; index again.")
             record.update(blocks=b, edits=e, images=im, warnings=warnings)
@@ -432,7 +452,10 @@ def index_sources(workspace, roots, *, max_files=2000, convert=False, libreoffic
 
     def apply(data):
         for r in records:
+            admit(data, r.get("sha256"), path=r["path"])
             upsert(data["sources"], r)
+            from utils.strict_trial import register_derived
+            register_derived(data, [i["path"] for i in r["images"]], "source_extraction")
         data["searches"].append(report)
 
     update_project(workspace, apply)

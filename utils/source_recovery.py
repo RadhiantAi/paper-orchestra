@@ -124,6 +124,8 @@ def recover_ocr(workspace, source_id, executable, max_pages=30):
     if not source.get("path") or not current_file(source):
         raise ValueError("Index a current local source before OCR.")
     path = Path(source["path"])
+    from utils.strict_trial import admit_file
+    admit_file(workspace, path)
     directory = private_path(workspace) / "ocr" / uuid.uuid4().hex
     directory.mkdir(parents=True)
     recovered = []

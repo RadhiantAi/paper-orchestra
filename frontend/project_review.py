@@ -178,8 +178,9 @@ def render_project(workspace):
             with right:
                 draft = st.text_input("Manuscript file to compare", key="compare_draft")
                 if draft:
+                    from utils.strict_trial import admit_file
                     content = action(
-                        lambda: doc_text(draft), "Manuscript opened locally."
+                        lambda: (admit_file(workspace, draft), doc_text(draft))[1], "Manuscript opened locally."
                     )
                     if content is not None:
                         st.text_area(
@@ -378,6 +379,8 @@ def render_project(workspace):
         extras = st.text_area("Supplement paths, one per line")
         result_folder = st.text_input("Exported results folder (optional)")
         mappings = []
+        from frontend.trial_controls import continuous_mapping_controls
+        continuous_mappings = continuous_mapping_controls(data)
         for r in data["results"]:
             template = st.text_input(
                 "Exact sentence or table text for " + r["id"],
@@ -413,6 +416,7 @@ def render_project(workspace):
                 if expectations is not None:
                     spec["manuscript_expectations"] = expectations
                 spec["figure_placements"] = placements
+                spec["continuous_mappings"] = continuous_mappings
                 return prepare_pack(workspace, spec, out, office or None)
 
             report = action(

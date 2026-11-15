@@ -93,3 +93,5 @@ watchdog==7.1.0
 websockets==17.4
 hypothesis==6.170.15
 sortedcontainers==2.4.0
+olefile==0.47
+xlrd==2.0.2

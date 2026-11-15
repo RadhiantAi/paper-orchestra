@@ -279,6 +279,11 @@ def prepare_pack(workspace, spec, output, libreoffice=None):
     spec = deepcopy(spec)
     spec.setdefault("stage", "coauthor_review")
     data = load_project(workspace)
+    from utils.strict_trial import admit_file
+    for entry in spec.get("files", []):
+        admit_file(workspace, entry["path"])
+    from utils.continuous_results import resolve_continuous, render_continuous, TOKEN
+    continuous = resolve_continuous(data)
     output = private_path(output)
     if output.exists():
         raise ValueError("Never overwrite a previous pack.")
@@ -317,6 +322,9 @@ def prepare_pack(workspace, spec, output, libreoffice=None):
         if digest(f["path"]) != f["sha256"]:
             raise ValueError("Pack input changed.")
     for fig in data["figures"]:
+        from utils.project_recovery import _receipts
+        for receipt in _receipts(fig):
+            admit_file(workspace, receipt["path"])
         issues = figure_issues(fig)
         if any(
             i["kind"]
@@ -344,6 +352,8 @@ def prepare_pack(workspace, spec, output, libreoffice=None):
                 dest = output / f["name"]
                 doc = Document(dest)
                 for p in all_paragraphs(doc):
+                    for token in TOKEN.finditer(p.text):
+                        paragraph_replace(p, token[0], render_continuous(token[0], continuous))
                     tokens = re.findall(r"\{\{result:[^}]+\}\}", p.text)
                     for token in tokens:
                         paragraph_replace(
@@ -424,6 +434,10 @@ def prepare_pack(workspace, spec, output, libreoffice=None):
                 else:
                     render_word(file, pdf, libreoffice)
         write_json(output / "pack_spec.json", spec)
+        if data.get("strict_trial", {}).get("enabled"):
+            from utils.strict_trial import register_derived
+            from utils.project_store import update_project
+            update_project(workspace, lambda d: register_derived(d, [p for p in output.rglob("*") if p.is_file()], "prepare_pack"))
         report = check_pack(workspace, output)
         if not any(f["name"] == "AuthorQuestions.txt" for f in spec["files"]):
             lines = [
@@ -446,6 +460,8 @@ def prepare_pack(workspace, spec, output, libreoffice=None):
             (output / "AuthorQuestions.txt").write_text(
                 "\n".join(lines) + "\n", encoding="utf-8"
             )
+            if data.get("strict_trial", {}).get("enabled"):
+                update_project(workspace, lambda d: register_derived(d, [output / "AuthorQuestions.txt"], "prepare_pack"))
             report = check_pack(workspace, output)
         write_json(output / "pack_check.json", report)
         return report
@@ -458,6 +474,11 @@ def prepare_pack(workspace, spec, output, libreoffice=None):
 def check_pack(workspace, directory):
     data = load_project(workspace)
     directory = private_path(directory)
+    if data.get("strict_trial", {}).get("enabled"):
+        from utils.strict_trial import admit_file
+        for path in directory.rglob("*"):
+            if path.is_file() and path.name not in {"pack_check.json", "visual_review.json", "release_receipt.json"}:
+                admit_file(workspace, path)
     spec = json.loads((directory / "pack_spec.json").read_text(encoding="utf-8"))
     problems, pending = [], []
     if (directory / "build_failure.json").exists():
@@ -466,6 +487,7 @@ def check_pack(workspace, directory):
         problems.append({"kind": "symlink_in_pack"})
     problems.extend(dependency_status(data))
     text_by_role = {}
+    text_by_document = {}
     for f in spec["files"]:
         dest = directory / f["name"]
         if not dest.exists():
@@ -475,6 +497,7 @@ def check_pack(workspace, directory):
             problems.append({"kind": "preserved_file_changed", "name": f["name"]})
         if dest.suffix.lower() in {".docx", ".md", ".txt"}:
             text_by_role[f["role"]] = doc_text(dest)
+            text_by_document[f["name"]] = text_by_role[f["role"]]
         if dest.suffix.lower() == ".docx":
             doc = Document(dest)
             starts = doc._element.xpath(".//w:commentRangeStart/@w:id")
@@ -500,6 +523,9 @@ def check_pack(workspace, directory):
                         )
                         break
     manuscript = text_by_role.get("manuscript", "")
+    from utils.continuous_results import audit_continuous
+    continuous_audit = audit_continuous(data, {**text_by_role, **text_by_document}, spec.get("continuous_mappings", []))
+    problems.extend(continuous_audit["findings"])
     from utils.manuscript_completeness import audit_completeness
     from utils.source_structure import allocation_findings
     completeness = audit_completeness(manuscript, spec.get("manuscript_expectations"))
@@ -759,6 +785,7 @@ def check_pack(workspace, directory):
         "problems": problems,
         "pending": pending,
         "numeric_status": audit["status"],
+        "continuous_results": continuous_audit,
         "consistency": consistency,
         "coverage": coverage,
         "completeness": completeness,
