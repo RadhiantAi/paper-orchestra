@@ -161,6 +161,69 @@ def test_freeze_rejects_document_changed_during_sealing(tmp_path, monkeypatch):
     assert "trial_freeze" not in load_project(w)
 
 
+def test_comparison_includes_tracked_insertions_without_approving_them(
+    tmp_path, monkeypatch
+):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    w = trial(tmp_path)
+    source = tmp_path / "primary.txt"
+    source.write_text("Synthetic input")
+    allow(w, source)
+    ref = tmp_path / "reference.docx"
+    doc = Document()
+    paragraph = doc.add_paragraph("Result ")
+    for kind, tag, value in [("ins", "t", "99.8"), ("del", "delText", "75.2")]:
+        revision = OxmlElement("w:" + kind)
+        revision.set(qn("w:id"), "1" if kind == "ins" else "2")
+        run = OxmlElement("w:r")
+        text = OxmlElement("w:" + tag)
+        text.text = value
+        run.append(text)
+        revision.append(run)
+        paragraph._p.append(revision)
+    doc.save(ref)
+    allocate_source(w, ref, "withheld_reference", "Reviewer", "Holdout")
+    freeze_protocol(
+        w,
+        {
+            "question": "Question",
+            "analysis_plan": "Describe",
+            "success_criteria": "Accuracy",
+            "exposure_statement": "Fixture only",
+            "recipes": [],
+        },
+        "Reviewer",
+        "Plan",
+    )
+    monkeypatch.setattr("utils.project_pack.render_word", fixture_render)
+    files = []
+    for name, role in [("Manuscript.docx", "manuscript"), ("Title.docx", "title_page")]:
+        p = tmp_path / name
+        d = Document()
+        d.add_paragraph("Synthetic candidate")
+        d.save(p)
+        register_draft(w, p, "Reviewer", "Generated")
+        files.append(
+            {
+                **file_receipt(p),
+                "name": name,
+                "role": role,
+                "preserve": role == "title_page",
+            }
+        )
+    out = w / "pack"
+    prepare_pack(w, {"files": files}, out)
+    record_visual_review(w, out, "Reviewer", "Fixture")
+    freeze_candidate(w, out, "Reviewer", "Sealed")
+    unblind(w, [file_receipt(ref)["sha256"]], "Reviewer", "Now reveal")
+    report = compare_reference(w, ref, tmp_path / "comparison.json")
+    assert "99.8" in report["numeric_candidates"]["only_in_reference"]
+    assert "75.2" not in report["numeric_candidates"]["only_in_reference"]
+    assert report["tracked_changes"]["reference"] == 2
+
+
 def test_interpretation_acceptance_requires_evidence_and_reopens(tmp_path):
     w, source, calc = continuous(tmp_path)
     checks = dict.fromkeys(CHECKS["calculation_interpretation"], True)

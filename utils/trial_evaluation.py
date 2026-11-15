@@ -291,7 +291,27 @@ def compare_reference(workspace, reference, output):
     if reference.suffix.lower() not in {".docx", ".pdf", ".md", ".txt"}:
         raise ValueError("Compare a Word, PDF or text reference.")
     candidate = Path(frozen["manuscript"]["path"])
-    left, right = doc_text(candidate), doc_text(reference)
+
+    def comparison_text(path):
+        if path.suffix.lower() != ".docx":
+            return doc_text(path), 0
+        # python-docx paragraph.text can omit inserted runs. Compare the current
+        # visible view, but retain the fact that changes have not been approved.
+        from utils.project_sources import package, XML, W, NS
+        from lxml import etree
+
+        with package(path) as archive:
+            root = etree.fromstring(archive.read("word/document.xml"), XML)
+        paragraphs = [
+            "".join(p.xpath(".//w:t[not(ancestor::w:del)]/text()", namespaces=NS))
+            for p in root.iter(W + "p")
+        ]
+        return "\n".join(paragraphs), len(
+            root.xpath("//w:ins | //w:del", namespaces=NS)
+        )
+
+    left, left_edits = comparison_text(candidate)
+    right, right_edits = comparison_text(reference)
     number = r"(?<![\w.])-?\d+(?:\.\d+)?%?(?![\w.])"
     left_numbers, right_numbers = (
         set(re.findall(number, left)),
@@ -319,6 +339,11 @@ def compare_reference(workspace, reference, output):
         "reference": receipt,
         "freeze_identity": frozen["identity"],
         "protocol_identity": frozen["protocol_identity"],
+        "tracked_changes": {
+            "candidate": left_edits,
+            "reference": right_edits,
+            "view": "Inserted text included; deleted text excluded. This does not accept or approve changes.",
+        },
         "numeric_candidates": {
             "only_in_candidate": sorted(left_numbers - right_numbers),
             "only_in_reference": sorted(right_numbers - left_numbers),
