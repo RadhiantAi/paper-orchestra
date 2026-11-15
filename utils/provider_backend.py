@@ -10,6 +10,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from utils.response_parsing import parse_json_results
 from utils.model_policy import active_policy
+from utils.network_policy import require_online
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -101,6 +102,7 @@ def validate_model_configuration(model_name):
 
 
 def _client(provider):
+    require_online("model clients and capability probes")
     timeout = float(os.getenv("PAPER_API_TIMEOUT", "300"))
     if provider in {"openai", "compatible"}:
         from openai import OpenAI
@@ -184,6 +186,7 @@ def _request(provider, model, parts, system, temperature, max_tokens):
 def _request_with_client(
     client, provider, model, parts, system, temperature, max_tokens
 ):
+    require_online("model requests")
     if provider in {"openai", "compatible"}:
         content = []
         for part in parts:
@@ -308,6 +311,7 @@ def call_llm_with_contents(
     return_json=True,
     result_parsing_func=None,
 ):
+    require_online("model requests")
     provider, model = resolve_model(model_name)
     validate_model_configuration(model_name)
     config = dict(generation_configs or {})

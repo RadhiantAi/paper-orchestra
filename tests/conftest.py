@@ -5,6 +5,9 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def offline_environment(monkeypatch, request):
+    # Positive adapter fixtures exercise the online branch against mocks only.
+    # The socket denial below still prevents all external network access.
+    monkeypatch.setenv("PAPER_NETWORK_MODE", "online")
     for name in (
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",

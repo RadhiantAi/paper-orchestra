@@ -17,13 +17,18 @@ from utils.project_review import (
     compare_versions,
     discussion_coverage,
 )
-from utils.project_results import approve_results, export_result_assets
+from utils.project_results import export_result_assets
+from utils.review_actions import approve_selected
+from utils.source_recovery import source_inventory, recover_ocr, confirm_ocr
+from utils.analysis_recipes import run_recipe, register_proportions
+from utils.journal_checks import check_journal
 from utils.project_figures import mask_image, match_images, figure_identity
 from utils.project_pack import (
     prepare_pack,
     check_pack,
     record_visual_review,
     release_pack,
+    doc_text,
 )
 from utils.run_control import write_json
 
@@ -37,6 +42,31 @@ def main(argv=None):
     p.add_argument("--workspace", required=True)
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
+    a = sub.add_parser("inventory")
+    a.add_argument("--output", required=True)
+    a = sub.add_parser("ocr")
+    a.add_argument("source_id")
+    a.add_argument("--executable", required=True)
+    a.add_argument("--max-pages", type=int, default=30)
+    a = sub.add_parser("confirm-ocr")
+    a.add_argument("source_id")
+    a.add_argument("locator")
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
+    a.add_argument("--correction-file")
+    a = sub.add_parser("analyse")
+    a.add_argument("recipe")
+    a.add_argument("csv")
+    a.add_argument("--output", required=True)
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
+    a = sub.add_parser("register-analysis")
+    a.add_argument("calculation_id")
+    a.add_argument("--definition", required=True)
+    a = sub.add_parser("journal-check")
+    a.add_argument("profile")
+    a.add_argument("manuscript")
+    a.add_argument("--output", required=True)
     a = sub.add_parser("index")
     a.add_argument("roots", nargs="+")
     a.add_argument("--convert-legacy", action="store_true")
@@ -117,6 +147,42 @@ def main(argv=None):
     if c == "init":
         create_project(w)
         result = {"status": "created"}
+    elif c == "inventory":
+        report = source_inventory(load_project(w))
+        write_json(args.output, report)
+        result = {"sources": report["sources"], "status": "saved"}
+    elif c == "ocr":
+        result = recover_ocr(w, args.source_id, args.executable, args.max_pages)
+    elif c == "confirm-ocr":
+        confirm_ocr(
+            w,
+            args.source_id,
+            args.locator,
+            args.reviewer,
+            args.reason,
+            Path(args.correction_file).read_text(encoding="utf-8")
+            if args.correction_file
+            else None,
+        )
+        result = {"status": "ocr_review_recorded"}
+    elif c == "analyse":
+        record = run_recipe(
+            w, read(args.recipe), args.csv, args.output, args.reviewer, args.reason
+        )
+        result = {"status": "calculated_not_approved", "id": record["id"]}
+    elif c == "register-analysis":
+        register_proportions(w, args.calculation_id, args.definition)
+        result = {"status": "registered_not_approved"}
+    elif c == "journal-check":
+        data = load_project(w)
+        report = check_journal(
+            read(args.profile),
+            doc_text(args.manuscript),
+            data["figures"],
+            data.get("journal_reviews"),
+        )
+        write_json(args.output, report)
+        result = {"status": report["status"], "findings": len(report["findings"])}
     elif c == "index":
         if args.max_files < 1:
             p.error("--max-files must be positive")
@@ -164,14 +230,7 @@ def main(argv=None):
         write_json(args.output, report)
         result = {"status": report["status"], "findings": len(report["findings"])}
     elif c == "approve-results":
-
-        def apply(data):
-            rows = [r for r in data["results"] if r["id"] in args.ids]
-            if {r["id"] for r in rows} != set(args.ids):
-                raise ValueError("Unknown result ID.")
-            approve_results(rows, args.reviewer, args.reason)
-
-        update_project(w, apply)
+        approve_selected(w, args.ids, args.reviewer, args.reason)
         result = {"status": "approval_recorded"}
     elif c == "export-results":
         result = export_result_assets(load_project(w)["results"], args.output)
@@ -221,7 +280,9 @@ def main(argv=None):
         result = release_pack(w, args.directory, args.output)
     # Counts/status only. Never print source contents or recognised patient identifiers.
     print(json.dumps(result, indent=2))
-    if result.get("status") == "failed":
+    if result.get("status") == "failed" or (
+        c == "journal-check" and result.get("status") != "checked"
+    ):
         raise SystemExit(1)
 
 

@@ -12,6 +12,11 @@ recovery, tracked edits, conditional author questions, approved results, image
 provenance and checked Word/PDF review packs. The host-assisted route uses the
 current chat's retrieved evidence without making model API calls.
 
+[REVIEW_WORKBENCH.md](REVIEW_WORKBENCH.md) covers the complete local review screen,
+OCR, reproducible aggregate analyses and journal checks. Networking is **offline by
+default**. An authorised live run must explicitly set `PAPER_NETWORK_MODE=online`;
+this applies even to free or local model endpoints.
+
 Read [RELIABILITY.md](RELIABILITY.md) for setup, saved runs, spending limits and verification; [DISCOVERY.md](DISCOVERY.md) covers literature sources. [FORK_NOTES.md](FORK_NOTES.md) summarises the fork. The upstream authors listed above created PaperOrchestra; this fork is independently modified.
 
 

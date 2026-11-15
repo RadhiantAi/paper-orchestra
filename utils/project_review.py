@@ -26,6 +26,17 @@ def evidence_valid(evidence, sources):
         and ("path" not in by_id[e["source_id"]] or current_file(by_id[e["source_id"]]))
         and any(
             b["locator"] == e.get("locator")
+            and not b.get("review_required")
+            and (
+                b.get("method") != "local_ocr"
+                or (
+                    b.get("review", {}).get("identity")
+                    == fingerprint(
+                        [by_id[e["source_id"]]["sha256"], b["text"], b.get("preview")]
+                    )
+                    and current_file(b.get("preview", {}))
+                )
+            )
             and e.get("quote")
             and e["quote"] in b["text"]
             for b in by_id[e["source_id"]].get("blocks", [])
@@ -115,7 +126,9 @@ def compare_versions(before, after, decisions=None):
         key = fingerprint(
             {"source": before["sha256"], "edit": edit, "after": after["sha256"]}
         )
-        decision = next((d for d in decisions if d.get("fingerprint") == key), None)
+        decision = next(
+            (d for d in reversed(decisions) if d.get("fingerprint") == key), None
+        )
         if (
             decision
             and decision.get("reviewer")

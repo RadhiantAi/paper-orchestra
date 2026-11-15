@@ -361,11 +361,13 @@ def index_sources(workspace, roots, *, max_files=2000, convert=False, libreoffic
         }
     )
     records = []
-    previous = {s["id"]: s for s in load_project(workspace)["sources"]}
+    project = load_project(workspace)
+    previous = {s["id"]: s for s in project["sources"]}
     for p in paths[:max_files]:
         record = {
             "id": fingerprint(str(p)),
             "path": str(p),
+            "display_name": project.get("upload_names", {}).get(str(p), p.name),
             "status": "read",
             "blocks": [],
             "edits": [],
@@ -390,7 +392,10 @@ def index_sources(workspace, roots, *, max_files=2000, convert=False, libreoffic
                 record["conversion"] = file_receipt(converted)
             b, e, im, warnings = extract(p, assets, converted=converted)
             record.update(blocks=b, edits=e, images=im, warnings=warnings)
-            if warnings:
+            from utils.source_recovery import retain_ocr
+
+            retain_ocr(previous.get(record["id"], {}), record)
+            if record["warnings"]:
                 record["status"] = "partial" if b or im else "unreadable"
         except Exception as exc:
             record.update(status="unreadable", warnings=[type(exc).__name__])

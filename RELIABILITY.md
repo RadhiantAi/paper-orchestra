@@ -4,6 +4,12 @@ Public. Updated 14 November 2026.
 
 ## Setup
 
+Networking defaults to offline. Set `PAPER_NETWORK_MODE=online` only for an
+authorised live run. Offline mode blocks provider calls, including compatible local
+models, and external retrieval independently of budgets. The local review screen,
+host evidence imports and aggregate analysis recipes work offline. See
+[REVIEW_WORKBENCH.md](REVIEW_WORKBENCH.md) for the guard's scope and limits.
+
 Use Python 3.14. `requirements-lock.txt` records the exact versions used for local
 validation, including development tools. Install with:
 

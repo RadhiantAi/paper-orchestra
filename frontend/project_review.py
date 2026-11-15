@@ -1,75 +1,392 @@
-"""Local author-query and source-coverage review screen."""
+"""Private review workbench. No model calls or external retrieval."""
 
 from pathlib import Path
+import json
 import streamlit as st
-
-from utils.project_store import load_project, dependency_status
-from utils.project_review import decide_query, query_status
+from utils.project_store import load_project, dependency_status, private_path
+from utils.project_review import (
+    decide_query,
+    query_status,
+    compare_versions,
+    import_host,
+)
+from utils.project_results import approved, export_result_assets
 from utils.project_figures import figure_issues
+from utils.project_sources import index_sources
+from utils.project_pack import (
+    doc_text,
+    prepare_pack,
+    check_pack,
+    record_visual_review,
+    release_pack,
+)
+from utils.review_actions import (
+    save_uploads,
+    approve_selected,
+    confirm_figure,
+    review_edit,
+    build_spec,
+)
+
+
+def action(fn, success="Saved."):
+    try:
+        value = fn()
+        st.success(success)
+        return value
+    except (ValueError, OSError, KeyError, StopIteration, RuntimeError) as exc:
+        st.error(str(exc) or "The record changed. Refresh the page.")
+        return None
+
+
+def source_label(s):
+    return (
+        s.get("display_name", Path(s.get("path", s.get("origin", s["id"]))).name)
+        + " ["
+        + s["id"][:8]
+        + "]"
+    )
 
 
 def render_project(workspace):
+    workspace = private_path(workspace)
     st.title("Manuscript project review")
     st.caption(
-        "Private local records. Reviewer names are audit labels, not authenticated signatures."
+        "Confidential local workspace. Reviewer names record decisions; they do not authenticate identity."
+    )
+    st.info(
+        "This review screen works locally. It makes no model calls or external searches."
     )
     data = load_project(workspace)
-    changed = dependency_status(data)
-    if changed:
+    if dependency_status(data):
         st.error(
-            f"{len(changed)} source files have changed or disappeared. Reindex before releasing a pack."
+            "Source files changed or disappeared. Reindex before releasing a pack."
         )
-    st.subheader("Source coverage")
-    st.write(
-        {
-            "sources": len(data["sources"]),
-            "unreadable_or_partial": sum(
-                s["status"] != "read" for s in data["sources"]
-            ),
-            "searches": len(data["searches"]),
-        }
-    )
-    st.dataframe(
+    sources, questions, edits, results, figures, coverage, packs = st.tabs(
         [
-            {
-                "source": Path(s.get("path", s.get("origin", s["id"]))).name,
-                "status": s["status"],
-                "warnings": ", ".join(s.get("warnings", [])),
-            }
-            for s in data["sources"]
+            "Sources and manuscript",
+            "Author questions",
+            "Earlier edits",
+            "Results",
+            "Figures",
+            "Journal and discussion",
+            "Review pack",
         ]
     )
-    st.subheader("Author questions")
-    if data["queries"]:
-        choices = {q["id"]: q for q in data["queries"]}
-        key = st.selectbox("Question", list(choices))
-        q = choices[key]
-        st.write({"owner": q["owner"], "status": query_status(q, data["sources"])})
-        st.write(q["question"])
-        st.quote(q["quote"]) if hasattr(st, "quote") else st.info(q["quote"])
-        if q.get("conditions"):
-            st.info(
-                "This confirmation is conditional. Exact source evidence must be supplied through the project CLI to resolve the conditions."
+    with sources:
+        st.subheader("Source coverage")
+        st.dataframe(
+            [
+                {
+                    "source": source_label(s),
+                    "status": s["status"],
+                    "warnings": ", ".join(s.get("warnings", [])),
+                }
+                for s in data["sources"]
+            ]
+        )
+        with st.expander("Add source files or host evidence"):
+            uploads = st.file_uploader("Source documents", accept_multiple_files=True)
+            convert = st.checkbox(
+                "Convert legacy Word documents using installed Word or LibreOffice"
             )
-            st.write(q["conditions"])
-        reviewer = st.text_input("Reviewer")
-        reason = st.text_area("Reason")
-        action = st.selectbox("Decision", ["flag", "confirm"])
-        if st.button("Record author decision"):
-            try:
-                decide_query(workspace, key, reviewer, reason, action)
-                st.success(
-                    "Decision recorded. Conditional checks remain open until evidence is supplied."
+            office = st.text_input("LibreOffice executable (optional)")
+            if st.button("Index uploaded sources", disabled=not uploads):
+                action(
+                    lambda: index_sources(
+                        workspace,
+                        save_uploads(
+                            workspace, [(f.name, f.getvalue()) for f in uploads]
+                        ),
+                        convert=convert,
+                        libreoffice=office or None,
+                    ),
+                    "Sources indexed. Refresh to view them.",
                 )
-            except ValueError as e:
-                st.error(str(e))
-    st.subheader("Figure checks")
-    st.dataframe(
-        [
-            {
-                "figure": f["id"],
-                "remaining_checks": ", ".join(i["kind"] for i in figure_issues(f)),
-            }
-            for f in data["figures"]
-        ]
-    )
+            exchange = st.file_uploader(
+                "Evidence exchange from your assistant", type=["json"]
+            )
+            if st.button("Import evidence exchange", disabled=exchange is None):
+                action(
+                    lambda: import_host(workspace, json.loads(exchange.getvalue())),
+                    "Evidence imported. Refresh to view it.",
+                )
+        if data["sources"]:
+            by_id = {s["id"]: s for s in data["sources"]}
+            selected = st.selectbox(
+                "Source to inspect",
+                list(by_id),
+                format_func=lambda k: source_label(by_id[k]),
+            )
+            source = by_id[selected]
+            left, right = st.columns(2)
+            with left:
+                blocks = source.get("blocks", [])
+                if blocks:
+                    n = st.selectbox(
+                        "Source passage",
+                        range(len(blocks)),
+                        format_func=lambda n: blocks[n]["locator"],
+                    )
+                    st.text_area(
+                        "Original source passage",
+                        blocks[n]["text"],
+                        height=320,
+                        disabled=True,
+                    )
+                else:
+                    st.warning("No text recovered. Check the source warnings.")
+            with right:
+                draft = st.text_input("Manuscript file to compare", key="compare_draft")
+                if draft:
+                    content = action(
+                        lambda: doc_text(draft), "Manuscript opened locally."
+                    )
+                    if content is not None:
+                        st.text_area(
+                            "Current manuscript", content, height=320, disabled=True
+                        )
+        from frontend.review_extensions import source_recovery
+
+        source_recovery(workspace, data)
+    with questions:
+        st.subheader("Author questions")
+        if data["queries"]:
+            choices = {q["id"]: q for q in data["queries"]}
+            key = st.selectbox("Question", list(choices))
+            q = choices[key]
+            st.write({"owner": q["owner"], "status": query_status(q, data["sources"])})
+            st.write(q["question"])
+            st.info(q["quote"])
+            proofs = []
+            candidates = [
+                (s, b)
+                for s in data["sources"]
+                for b in s.get("blocks", [])
+                if b.get("text")
+            ]
+            for condition in q.get("conditions", []):
+                st.write(condition["description"])
+                chosen = st.selectbox(
+                    "Supporting passage: " + condition["id"],
+                    [None] + list(range(len(candidates))),
+                    format_func=lambda i: (
+                        "No evidence selected"
+                        if i is None
+                        else source_label(candidates[i][0])
+                        + " / "
+                        + candidates[i][1]["locator"]
+                    ),
+                    key=key + condition["id"],
+                )
+                if chosen is not None:
+                    s, b = candidates[chosen]
+                    st.text(b["text"])
+                    quote = st.text_area(
+                        "Exact supporting quote: " + condition["id"],
+                        b["text"],
+                        key=key + condition["id"] + str(chosen) + "quote",
+                    )
+                    proofs.append(
+                        {
+                            "id": condition["id"],
+                            "evidence": [
+                                {
+                                    "source_id": s["id"],
+                                    "source_sha256": s["sha256"],
+                                    "locator": b["locator"],
+                                    "quote": quote,
+                                }
+                            ],
+                        }
+                    )
+            reviewer = st.text_input("Reviewer")
+            reason = st.text_area("Reason")
+            decision = st.selectbox("Decision", ["flag", "confirm"])
+            if st.button("Record author decision"):
+                updated = action(
+                    lambda: decide_query(
+                        workspace, key, reviewer, reason, decision, proofs
+                    )
+                )
+                if updated:
+                    st.write(
+                        "Current status: "
+                        + query_status(
+                            next(q for q in updated["queries"] if q["id"] == key),
+                            updated["sources"],
+                        )
+                    )
+    with edits:
+        st.subheader("Compare earlier versions")
+        ids = {s["id"]: s for s in data["sources"]}
+        if len(ids) >= 2:
+            before = st.selectbox(
+                "Earlier source", list(ids), format_func=lambda k: source_label(ids[k])
+            )
+            after = st.selectbox(
+                "Revised source",
+                list(ids),
+                index=1,
+                format_func=lambda k: source_label(ids[k]),
+            )
+            report = compare_versions(
+                ids[before], ids[after], data.get("edit_decisions")
+            )
+            st.code(report["diff"], language="diff")
+            if report["edits"]:
+                n = st.selectbox(
+                    "Editorial point",
+                    range(len(report["edits"])),
+                    format_func=lambda n: (
+                        str(n + 1) + " " + report["edits"][n]["status"]
+                    ),
+                )
+                row = report["edits"][n]
+                st.write(row["edit"])
+                status = st.selectbox(
+                    "Disposition", ["retained", "rejected", "superseded"]
+                )
+                who = st.text_input("Edit reviewer")
+                why = st.text_area("Edit reason")
+                if st.button("Save edit disposition"):
+                    action(
+                        lambda: review_edit(
+                            workspace,
+                            before,
+                            after,
+                            row["fingerprint"],
+                            status,
+                            who,
+                            why,
+                        )
+                    )
+    with results:
+        st.subheader("Approved results")
+        st.dataframe(
+            [
+                {
+                    **{k: v for k, v in r.items() if k != "approval"},
+                    "approved": approved(r),
+                }
+                for r in data["results"]
+            ]
+        )
+        selected = st.multiselect(
+            "Results to approve", [r["id"] for r in data["results"]]
+        )
+        who = st.text_input("Result reviewer")
+        why = st.text_area("Result approval reason")
+        if st.button("Approve selected results"):
+            action(lambda: approve_selected(workspace, selected, who, why))
+        output = st.text_input("New results folder", str(workspace / "results-v1"))
+        if st.button("Export approved results"):
+            action(
+                lambda: export_result_assets(load_project(workspace)["results"], output)
+            )
+        from frontend.review_extensions import analysis_screen
+
+        analysis_screen(workspace, data)
+    with figures:
+        st.subheader("Figure checks")
+        if data["figures"]:
+            choices = {f["id"]: f for f in data["figures"]}
+            fid = st.selectbox("Figure", list(choices))
+            fig = choices[fid]
+            st.write(fig["caption"])
+            for col, panel in zip(st.columns(len(fig["panels"])), fig["panels"]):
+                with col:
+                    if Path(panel["display"]["path"]).is_file():
+                        st.image(panel["display"]["path"], caption=panel["label"])
+                    st.caption(panel["source_label"])
+            st.write(figure_issues(fig))
+            checks = st.multiselect(
+                "Checks personally reviewed",
+                [
+                    "image_identity",
+                    "caption",
+                    "clinical",
+                    "cohort",
+                    "reproduction",
+                    "privacy",
+                ],
+            )
+            who = st.text_input("Figure reviewer")
+            why = st.text_area("Figure review reason")
+            if st.button("Record figure checks"):
+                action(lambda: confirm_figure(workspace, fid, checks, who, why))
+        from frontend.review_extensions import figure_editor
+
+        figure_editor(workspace, data)
+    with coverage:
+        from frontend.review_extensions import journal_screen
+
+        journal_screen(workspace, data)
+    with packs:
+        st.subheader("Prepare a review pack")
+        st.caption("Files remain local. Creating a ZIP does not send or submit it.")
+        manuscript = st.text_input("Manuscript Word file")
+        title = st.text_input("Approved title page Word file")
+        extras = st.text_area("Supplement paths, one per line")
+        result_folder = st.text_input("Exported results folder (optional)")
+        mappings = []
+        for r in data["results"]:
+            template = st.text_input(
+                "Exact sentence or table text for " + r["id"],
+                key="mapping" + r["id"],
+                help="Replace its value with {{result:ID:pair}}, count, denominator or percent.",
+            )
+            if template:
+                mappings.append({"id": r["id"], "template": template})
+        stage = st.selectbox("Pack purpose", ["coauthor_review", "submission"])
+        journal = st.text_input("Journal profile JSON file (optional)")
+        out = st.text_input("New pack folder", str(workspace / "pack-v1"))
+        office = st.text_input("Pack LibreOffice executable (optional)")
+        if st.button("Build Word and PDF pack"):
+
+            def build():
+                profile = (
+                    json.loads(Path(journal).read_text())
+                    if journal
+                    else data.get("journal_profile")
+                )
+                spec = build_spec(
+                    workspace,
+                    manuscript,
+                    title,
+                    [p for p in extras.splitlines() if p.strip()],
+                    mappings,
+                    stage,
+                    profile,
+                    result_folder or None,
+                )
+                return prepare_pack(workspace, spec, out, office or None)
+
+            report = action(
+                build, "Build complete. Read the check results before release."
+            )
+            if report:
+                st.write(report["problems"])
+                st.write(report["pending"])
+        if st.button("Check existing pack"):
+            report = action(lambda: check_pack(workspace, out), "Checks completed.")
+            if report:
+                st.write(report["problems"])
+                st.write(report["pending"])
+        who = st.text_input("Visual reviewer")
+        notes = st.text_area("What you inspected in the Word and PDF files")
+        if st.button("Record visual review"):
+            action(lambda: record_visual_review(workspace, out, who, notes))
+        dest = st.text_input("New review ZIP", str(workspace / "review-v1.zip"))
+        if st.button("Create checked ZIP"):
+            receipt = action(
+                lambda: release_pack(workspace, out, dest),
+                "Verified ZIP saved locally.",
+            )
+            if receipt:
+                st.download_button(
+                    "Download review ZIP",
+                    Path(dest).read_bytes(),
+                    file_name=Path(dest).name,
+                    mime="application/zip",
+                )

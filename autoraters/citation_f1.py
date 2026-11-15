@@ -112,6 +112,8 @@ class ReferenceF1V1Evaluator:
         """
         Queries Semantic Scholar with the raw citation string to find a Unique ID (paperId).
         """
+        from utils.network_policy import require_online
+        require_online('citation retrieval')
         if not paper_title:
             return None
 
