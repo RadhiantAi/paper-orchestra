@@ -30,7 +30,8 @@ def _paragraphs(path, original=False):
         result = []
         for p in root.iter(W + "p"):
             query = (
-                ".//w:t[not(ancestor::w:ins)]/text() | .//w:delText/text()"
+                ".//w:t[not(ancestor::w:ins)]/text() | "
+                ".//w:delText[not(ancestor::w:ins)]/text()"
                 if original
                 else ".//w:t[not(ancestor::w:del)]/text()"
             )

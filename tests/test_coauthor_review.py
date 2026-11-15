@@ -194,3 +194,50 @@ def test_pending_return_enters_submission_pack_gate(tmp_path, monkeypatch):
     report = prepare_pack(w, spec, tmp_path / "submission")
     assert report["status"] == "failed"
     assert any(f["kind"] == "coauthor_item_pending" for f in report["pending"])
+def test_original_view_excludes_deletions_inside_inserted_text(tmp_path):
+    """Rejecting an inserted passage also rejects nested revisions within it."""
+    from docx import Document
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from utils.coauthor_review import _paragraphs
+
+    baseline = tmp_path / "baseline.docx"
+    doc = Document()
+    doc.add_paragraph("Original paragraph.")
+    doc.save(baseline)
+    returned = tmp_path / "returned.docx"
+    paragraph = doc.paragraphs[0]
+    inserted = OxmlElement("w:ins")
+    inserted.set(qn("w:author"), "Synthetic reviewer")
+    deleted = OxmlElement("w:del")
+    run = OxmlElement("w:r")
+    text = OxmlElement("w:delText")
+    text.text = " Obsolete text within the new insertion."
+    run.append(text)
+    deleted.append(run)
+    inserted.append(deleted)
+    run = OxmlElement("w:r")
+    text = OxmlElement("w:t")
+    text.text = " New text."
+    run.append(text)
+    inserted.append(run)
+    paragraph._p.append(inserted)
+    doc.save(returned)
+    assert _paragraphs(returned, original=True) == ["Original paragraph."]
+    assert _paragraphs(returned) == ["Original paragraph. New text."]
+
+    workspace = tmp_path / "review"
+    create_project(workspace)
+    issued = register_issued(workspace, baseline, "Synthetic clean baseline")
+    review = import_return(workspace, issued["id"], returned, "Synthetic owner")
+    assert review["base_verified"]
+    assert review["items"][0]["before"] == ["Original paragraph."]
+    assert review["items"][0]["after"] == ["Original paragraph. New text."]
+
+    # A baseline containing the nested deletion must fail the ancestry check.
+    bad = Document()
+    bad.add_paragraph("Original paragraph. Obsolete text within the new insertion.")
+    bad.save(tmp_path / "wrong.docx")
+    wrong = register_issued(workspace, tmp_path / "wrong.docx", "Wrong baseline")
+    mismatch = import_return(workspace, wrong["id"], returned, "Synthetic owner")
+    assert not mismatch["base_verified"]
