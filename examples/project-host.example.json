@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "mode": "host_assisted",
+  "host": "Synthetic example host",
+  "sources": [{
+    "id": "source1",
+    "origin": "https://example.org/synthetic-source",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": "read",
+    "blocks": [{"locator": "page:1", "text": "Synthetic description. Thirteen of twenty observations were positive."}]
+  }],
+  "searches": [{"source": "example host", "query": "synthetic source", "status": "complete"}],
+  "queries": [{
+    "id": "q1", "owner": "Reviewer", "question": "Confirm that the complete description matches the original.",
+    "target": "manuscript", "quote": "Synthetic description.",
+    "evidence": [{"source_id": "source1", "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "locator": "page:1", "quote": "Synthetic description."}],
+    "conditions": [{"id": "unchanged", "kind": "exact_text_match", "description": "Complete description matches the source."}]
+  }],
+  "results": [{
+    "id": "region", "label": "Synthetic region", "definition": "At least one specified finding",
+    "source": "Synthetic aggregate table", "method": "Count eligible positive observations",
+    "count": 13, "denominator": 20, "precision": 1
+  }],
+  "topics": [{
+    "id": "proposal", "kind": "proposed_study", "text": "Repeat observations independently", "source_id": "source1",
+    "manuscript_quote": "Independent replication remains to be verified.", "qualification": "remains to be verified"
+  }]
+}

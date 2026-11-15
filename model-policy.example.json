@@ -1,0 +1,14 @@
+{
+  "compatible:YOUR_MODEL_ID": {
+    "text": true,
+    "json": true,
+    "images": true,
+    "max_input_tokens": 64000,
+    "max_output_tokens": 16384,
+    "max_image_tokens": 8192,
+    "input_usd_per_million": 0,
+    "output_usd_per_million": 0,
+    "pricing_checked_on": "REPLACE_WITH_DATE",
+    "note": "Illustrative local model only. Verify capabilities and limits; supply current prices for any paid endpoint."
+  }
+}

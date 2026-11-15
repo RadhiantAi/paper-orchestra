@@ -1,0 +1,229 @@
+"""Private host-assisted projects: sources, review, results, figures and checked packs."""
+
+import argparse
+import json
+from pathlib import Path
+
+from utils.project_store import (
+    create_project,
+    load_project,
+    update_project,
+    private_path,
+)
+from utils.project_sources import index_sources, search_index
+from utils.project_review import (
+    import_host,
+    decide_query,
+    compare_versions,
+    discussion_coverage,
+)
+from utils.project_results import approve_results, export_result_assets
+from utils.project_figures import mask_image, match_images, figure_identity
+from utils.project_pack import (
+    prepare_pack,
+    check_pack,
+    record_visual_review,
+    release_pack,
+)
+from utils.run_control import write_json
+
+
+def read(path):
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--workspace", required=True)
+    sub = p.add_subparsers(dest="command", required=True)
+    sub.add_parser("init")
+    a = sub.add_parser("index")
+    a.add_argument("roots", nargs="+")
+    a.add_argument("--convert-legacy", action="store_true")
+    a.add_argument("--libreoffice")
+    a.add_argument("--max-files", type=int, default=2000)
+    a = sub.add_parser("search")
+    a.add_argument("terms", nargs="+")
+    a.add_argument("--output", required=True)
+    a = sub.add_parser("import-host")
+    a.add_argument("payload")
+    a = sub.add_parser("decide")
+    a.add_argument("query_id")
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
+    a.add_argument("--action", choices=["confirm", "flag"], default="confirm")
+    a.add_argument("--proofs")
+    a = sub.add_parser("compare")
+    a.add_argument("before")
+    a.add_argument("after")
+    a.add_argument("--output", required=True)
+    a = sub.add_parser("coverage")
+    a.add_argument("manuscript")
+    a.add_argument("--output", required=True)
+    a = sub.add_parser("approve-results")
+    a.add_argument("--ids", nargs="+", required=True)
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
+    a = sub.add_parser("export-results")
+    a.add_argument("--output", required=True)
+    a = sub.add_parser("confirm-figure")
+    a.add_argument("figure_id")
+    a.add_argument(
+        "--check",
+        choices=[
+            "image_identity",
+            "caption",
+            "clinical",
+            "cohort",
+            "reproduction",
+            "privacy",
+        ],
+        required=True,
+    )
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
+    a = sub.add_parser("mask")
+    a.add_argument("image")
+    a.add_argument("--output", required=True)
+    a.add_argument(
+        "--rectangles",
+        required=True,
+        help="JSON file of pixel rectangles [left,top,right,bottom]",
+    )
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--reason", required=True)
+    a = sub.add_parser("match")
+    a.add_argument("image")
+    a.add_argument("candidates", nargs="+")
+    a.add_argument("--output", required=True)
+    a = sub.add_parser("prepare")
+    a.add_argument("spec")
+    a.add_argument("--output", required=True)
+    a.add_argument("--libreoffice")
+    a = sub.add_parser("check")
+    a.add_argument("directory")
+    a = sub.add_parser("visual-review")
+    a.add_argument("directory")
+    a.add_argument("--reviewer", required=True)
+    a.add_argument("--notes", required=True)
+    a = sub.add_parser("release")
+    a.add_argument("directory")
+    a.add_argument("--output", required=True)
+    args = p.parse_args(argv)
+    w = args.workspace
+    c = args.command
+    if getattr(args, "output", None):
+        private_path(args.output)
+    if c == "init":
+        create_project(w)
+        result = {"status": "created"}
+    elif c == "index":
+        if args.max_files < 1:
+            p.error("--max-files must be positive")
+        report = index_sources(
+            w,
+            args.roots,
+            convert=args.convert_legacy,
+            libreoffice=args.libreoffice,
+            max_files=args.max_files,
+        )
+        result = {
+            k: report[k] for k in ["discovered", "processed", "truncated", "complete"]
+        }
+    elif c == "import-host":
+        import_host(w, read(args.payload))
+        result = {"status": "imported", "local_model_calls": 0}
+    elif c == "decide":
+        decide_query(
+            w,
+            args.query_id,
+            args.reviewer,
+            args.reason,
+            args.action,
+            read(args.proofs) if args.proofs else None,
+        )
+        result = {"status": "recorded"}
+    elif c == "search":
+        matches = search_index(load_project(w), args.terms)
+        write_json(args.output, matches)
+        result = {"matches": len(matches)}
+    elif c == "compare":
+        data = load_project(w)
+        sources = {s["id"]: s for s in data["sources"]}
+        report = compare_versions(
+            sources[args.before], sources[args.after], data.get("edit_decisions")
+        )
+        write_json(args.output, report)
+        result = {
+            "unresolved": sum(e["status"] == "unresolved" for e in report["edits"])
+        }
+    elif c == "coverage":
+        report = discussion_coverage(
+            load_project(w), Path(args.manuscript).read_text(encoding="utf-8")
+        )
+        write_json(args.output, report)
+        result = {"status": report["status"], "findings": len(report["findings"])}
+    elif c == "approve-results":
+
+        def apply(data):
+            rows = [r for r in data["results"] if r["id"] in args.ids]
+            if {r["id"] for r in rows} != set(args.ids):
+                raise ValueError("Unknown result ID.")
+            approve_results(rows, args.reviewer, args.reason)
+
+        update_project(w, apply)
+        result = {"status": "approval_recorded"}
+    elif c == "export-results":
+        result = export_result_assets(load_project(w)["results"], args.output)
+    elif c == "confirm-figure":
+        if not args.reviewer.strip() or not args.reason.strip():
+            p.error("Reviewer and reason cannot be blank")
+
+        def apply(data):
+            f = next(f for f in data["figures"] if f["id"] == args.figure_id)
+            f.setdefault("checks", {})[args.check] = {
+                "status": "confirmed",
+                "identity": figure_identity(f),
+                "reviewer": args.reviewer,
+                "reason": args.reason,
+            }
+
+        update_project(w, apply)
+        result = {"status": "confirmation_recorded"}
+    elif c == "mask":
+        mask_image(
+            args.image, args.output, read(args.rectangles), args.reviewer, args.reason
+        )
+        result = {"status": "masked_copy_created", "privacy": "visual_review_required"}
+    elif c == "match":
+        matches = match_images(args.image, args.candidates)
+        write_json(args.output, matches)
+        result = {"candidates": len(matches), "clinical_approval": False}
+    elif c == "prepare":
+        report = prepare_pack(w, read(args.spec), args.output, args.libreoffice)
+        result = {
+            "status": report["status"],
+            "problems": len(report["problems"]),
+            "pending": len(report["pending"]),
+        }
+    elif c == "check":
+        report = check_pack(w, args.directory)
+        write_json(Path(args.directory) / "pack_check.json", report)
+        result = {
+            "status": report["status"],
+            "problems": len(report["problems"]),
+            "pending": len(report["pending"]),
+        }
+    elif c == "visual-review":
+        record_visual_review(w, args.directory, args.reviewer, args.notes)
+        result = {"status": "visual_review_recorded"}
+    else:
+        result = release_pack(w, args.directory, args.output)
+    # Counts/status only. Never print source contents or recognised patient identifiers.
+    print(json.dumps(result, indent=2))
+    if result.get("status") == "failed":
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

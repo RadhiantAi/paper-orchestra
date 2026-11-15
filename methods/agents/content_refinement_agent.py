@@ -16,14 +16,10 @@ import os
 import traceback
 import json
 import shutil
-from google.genai import types  # type: ignore
 
 from utils.pdf_utils import compile_latex, load_paper, pdf_to_grid_images
-from utils.gemini_utils import (
-    call_gemini_with_contents,
-    parse_gemini_json_latex_response,
-    call_gemini_with_images,
-)
+from utils.llm_backend_utils import call_llm_with_contents, call_llm_with_images
+from utils.response_parsing import parse_json_latex_response
 
 from autoraters.agent_review import perform_review_agentreview
 
@@ -38,7 +34,7 @@ class ContentRefinementAgent:
         experimental_log_path: str,
         citation_map_path: str,
         guidelines_path: str,
-        model_name: str = "gemini-3.1-pro-preview",
+        model_name: str = None,
         max_reflections: int = 3,
         work_dir: str = "./paper_workspace",
     ):
@@ -92,7 +88,11 @@ class ContentRefinementAgent:
                 model_name=self.model_name,
             )
 
-            score = review.get("Overall", 0)
+            if not isinstance(review, dict) or "Overall" not in review:
+                raise ValueError("Review is missing its overall score.")
+            score = float(review["Overall"])
+            if not 1 <= score <= 10:
+                raise ValueError("Review score is outside the expected range.")
             print(f" >> [Reviewer] Score for {iteration_label}: {score}/10")
 
             version_name = "v0" if iteration_label == "initial" else iteration_label
@@ -103,10 +103,10 @@ class ContentRefinementAgent:
                 json.dump(review, f, indent=4)
 
             return review, float(score)
-        except Exception as e:
-            print(f" >> [Reviewer] Error generating review: {e}")
-            traceback.print_exc()
-            return {"Error": str(e), "Overall": 0}, 0.0
+        except Exception:
+            raise RuntimeError(
+                "Peer review failed. The draft has not completed review."
+            ) from None
 
     def _get_formatting_review(self, pdf_path: str, iteration_label: str) -> dict:
         """Helper to call VLM for formatting feedback."""
@@ -162,19 +162,25 @@ Respond in JSON format with the following structure:
 ```
 """
             )
-            response_dict = call_gemini_with_images(
+            response_dict = call_llm_with_images(
                 prompt=prompt,
                 images=image_paths,
                 model_name=self.model_name,
             )
 
             formatting_review = response_dict["parsed_response"]
+            if (
+                not isinstance(formatting_review, dict)
+                or not isinstance(formatting_review.get("figure_and_tables"), dict)
+                or not isinstance(formatting_review.get("other_issues"), (list, str))
+            ):
+                raise ValueError("Formatting review is incomplete.")
 
             return formatting_review
-        except Exception as e:
-            print(f" >> [VLM] Error generating formatting review: {e}")
-            traceback.print_exc()
-            return {"Error": str(e)}
+        except Exception:
+            raise RuntimeError(
+                "Formatting review failed. The draft has not completed review."
+            ) from None
 
     def _extract_scores(self, review: dict) -> dict:
         """Extracts numerical scores from the review dictionary for comparison."""
@@ -247,9 +253,9 @@ Respond in JSON format with the following structure:
 
         # --- Content Refinement Loop ---
         for i in range(self.max_reflections):
-            print(f"\n=== Refinement Iteration {i+1}/{self.max_reflections} ===")
+            print(f"\n=== Refinement Iteration {i + 1}/{self.max_reflections} ===")
 
-            cur_filename = f"refined_paper_v{i+1}"
+            cur_filename = f"refined_paper_v{i + 1}"
             cur_pdf_path = os.path.join(self.work_dir, f"{cur_filename}.pdf")
 
             previous_log_str = (
@@ -257,7 +263,7 @@ Respond in JSON format with the following structure:
             )
 
             user_prompt_text = f"""
-REFLECTION ITERATION {i+1}.
+REFLECTION ITERATION {i + 1}.
 
 --- PREVIOUS ITERATION LOG ---
 {previous_log_str}
@@ -266,13 +272,13 @@ REFLECTION ITERATION {i+1}.
 {json.dumps(current_peer_review, indent=2)}
 
 --- CONFERENCE GUIDELINES ---
-{context_files['guidelines']}
+{context_files["guidelines"]}
 
 --- EXPERIMENTAL LOG (Data Truth) ---
-{context_files['experimental_log']}
+{context_files["experimental_log"]}
 
 --- CITATION MAP (Reference Truth) ---
-{context_files['citations']}
+{context_files["citations"]}
 
 --- CURRENT LATEX SOURCE ---
 {self.current_tex}
@@ -290,16 +296,14 @@ INSTRUCTION:
 
             print(" >> calling Refinement Agent...")
             try:
-                response_dict = call_gemini_with_contents(
+                response_dict = call_llm_with_contents(
                     contents=[
-                        types.Part.from_bytes(
-                            data=pdf_bytes, mime_type="application/pdf"
-                        ),
-                        types.Part.from_text(text=user_prompt_text),
+                        {"data": pdf_bytes, "mime_type": "application/pdf"},
+                        user_prompt_text,
                     ],
                     generation_configs={"system_instruction": self.system_prompt},
                     model_name=self.model_name,
-                    result_parsing_func=parse_gemini_json_latex_response,
+                    result_parsing_func=parse_json_latex_response,
                 )
 
                 parsed = json.loads(response_dict["parsed_response"])
@@ -326,12 +330,12 @@ INSTRUCTION:
                 print(f" >> New PDF saved to {cur_pdf_path}")
 
                 screenshots_dir = os.path.join(
-                    self.work_dir, "pdf_screenshots", "content_refinement", f"v{i+1}"
+                    self.work_dir, "pdf_screenshots", "content_refinement", f"v{i + 1}"
                 )
-                print(f" >> Generating snapshots for v{i+1}...")
+                print(f" >> Generating snapshots for v{i + 1}...")
                 pdf_to_grid_images(cur_pdf_path, screenshots_dir)
 
-                new_review, new_score = self._get_peer_review(cur_pdf_path, f"v{i+1}")
+                new_review, new_score = self._get_peer_review(cur_pdf_path, f"v{i + 1}")
 
                 # --- COMPARISON LOGIC & METRICS EXTRACTION ---
                 old_metrics = self._extract_scores(current_peer_review)
@@ -365,7 +369,7 @@ INSTRUCTION:
                     "outcome": "UNKNOWN",  # Will be updated below
                 }
 
-                print(f" >> Score Analysis v{i+1}:")
+                print(f" >> Score Analysis v{i + 1}:")
                 print(
                     f"    Overall: {old_metrics['Overall']} -> {new_metrics['Overall']}"
                 )
@@ -379,7 +383,7 @@ INSTRUCTION:
                     )
 
                     current_log_entry["outcome"] = "ACCEPTED_SCORE_INCREASE"
-                    self.worklogs[f"v{i+1}"] = current_log_entry
+                    self.worklogs[f"v{i + 1}"] = current_log_entry
 
                     self.current_tex = new_tex
                     self.current_score = new_score
@@ -397,7 +401,7 @@ INSTRUCTION:
                     )
 
                     current_log_entry["outcome"] = "REJECTED_SCORE_DECREASE"
-                    self.worklogs[f"v{i+1}"] = current_log_entry
+                    self.worklogs[f"v{i + 1}"] = current_log_entry
 
                     # Save Log and Break
                     with open(worklog_save_path, "w", encoding="utf-8") as f:
@@ -413,7 +417,7 @@ INSTRUCTION:
                         )
 
                         current_log_entry["outcome"] = "REJECTED_DEGRADATION"
-                        self.worklogs[f"v{i+1}"] = current_log_entry
+                        self.worklogs[f"v{i + 1}"] = current_log_entry
 
                         # Save Log and Break
                         with open(worklog_save_path, "w", encoding="utf-8") as f:
@@ -426,7 +430,7 @@ INSTRUCTION:
                         )
 
                         current_log_entry["outcome"] = "ACCEPTED_NEUTRAL_IMPROVEMENT"
-                        self.worklogs[f"v{i+1}"] = current_log_entry
+                        self.worklogs[f"v{i + 1}"] = current_log_entry
 
                         self.current_tex = new_tex
                         self.current_score = new_score
@@ -458,10 +462,10 @@ INSTRUCTION:
         print(" >> Starting dedicated formatting loop...")
         max_formatting_loops = 1
         for fmt_i in range(max_formatting_loops):
-            print(f"\n=== Formatting Iteration {fmt_i+1}/{max_formatting_loops} ===")
+            print(f"\n=== Formatting Iteration {fmt_i + 1}/{max_formatting_loops} ===")
 
             formatting_review = self._get_formatting_review(
-                final_valid_pdf_path, f"fmt_loop_{fmt_i+1}"
+                final_valid_pdf_path, f"fmt_loop_{fmt_i + 1}"
             )
 
             has_issues = False
@@ -494,7 +498,9 @@ INSTRUCTION:
                 print(" >> No critical formatting issues found. Breaking loop.")
                 break
 
-            print(" >> [VLM] Found formatting issues. Calling Gemini to fix...")
+            print(
+                " >> [VLM] Found formatting issues. Calling the selected model to fix..."
+            )
 
             prompt = f"""You are a LaTeX formatting expert. Your task is to fix the formatting issues identified in the feedback below.
 You must STRICTLY follow the provided formatting guidelines.
@@ -517,9 +523,9 @@ block.
 """
 
             try:
-                response_dict = call_gemini_with_contents(
+                response_dict = call_llm_with_contents(
                     contents=[
-                        types.Part.from_text(text=prompt),
+                        prompt,
                     ],
                     model_name=self.model_name,
                     result_parsing_func=lambda x: {"raw_response": x},
@@ -532,7 +538,7 @@ block.
                 else:
                     new_tex = raw_response.strip()
 
-                candidate_tex_name = f"formatted_candidate_v{fmt_i+1}"
+                candidate_tex_name = f"formatted_candidate_v{fmt_i + 1}"
                 candidate_tex_path = os.path.join(
                     self.work_dir, f"{candidate_tex_name}.tex"
                 )
@@ -546,7 +552,9 @@ block.
                 compile_latex(self.work_dir, candidate_pdf_path, candidate_tex_name)
 
                 if os.path.exists(candidate_pdf_path):
-                    print(f" >> Formatting iteration {fmt_i+1} compiled successfully.")
+                    print(
+                        f" >> Formatting iteration {fmt_i + 1} compiled successfully."
+                    )
                     self.current_tex = new_tex
                     final_valid_pdf_path = candidate_pdf_path
 
@@ -554,16 +562,16 @@ block.
                         "outcome": "ACCEPTED_COMPILE_SUCCESS",
                         "formatting_feedback": formatting_review,
                     }
-                    self.format_worklogs[f"v{fmt_i+1}"] = log_entry
+                    self.format_worklogs[f"v{fmt_i + 1}"] = log_entry
                 else:
                     print(
-                        f" >> Formatting iteration {fmt_i+1} failed to compile. Skipping."
+                        f" >> Formatting iteration {fmt_i + 1} failed to compile. Skipping."
                     )
                     log_entry = {
                         "outcome": "REJECTED_COMPILE_FAILURE",
                         "formatting_feedback": formatting_review,
                     }
-                    self.format_worklogs[f"v{fmt_i+1}"] = log_entry
+                    self.format_worklogs[f"v{fmt_i + 1}"] = log_entry
 
                 format_worklog_save_path = os.path.join(
                     self.work_dir, "format_refinement_worklog.json"

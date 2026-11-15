@@ -3,9 +3,21 @@
 <div align="center"><sup>1</sup>Google Cloud AI Research</div>
 <br><br>
 
-PaperOrchestra is a multi-agent framework for automated AI research paper writing. It flexibly transforms unconstrained pre-writing materials (ideas and experimental logs) into submission-ready LaTeX manuscripts, including comprehensive literature synthesis and generated visuals, such as plots and conceptual diagrams.
+## RadhiantAi research trial fork
 
-Acting like an orchestrated team of specialized agents, it handles outline generation, literature review, section writing, content refinement, and plotting to close the gap between raw research materials and submission ready papers.
+This fork supports OpenAI, Anthropic, Gemini and OpenAI-compatible endpoints. Writing, review and literature ranking can use different models. It removes generated-code execution and automatic email delivery. Outputs require human review.
+
+For existing manuscripts, [PROJECT_WORKFLOW.md](PROJECT_WORKFLOW.md) covers source
+recovery, tracked edits, conditional author questions, approved results, image
+provenance and checked Word/PDF review packs. The host-assisted route uses the
+current chat's retrieved evidence without making model API calls.
+
+Read [RELIABILITY.md](RELIABILITY.md) for setup, saved runs, spending limits and verification; [DISCOVERY.md](DISCOVERY.md) covers literature sources. [FORK_NOTES.md](FORK_NOTES.md) summarises the fork. The upstream authors listed above created PaperOrchestra; this fork is independently modified.
+
+
+PaperOrchestra is a multi-agent framework for automated AI research paper writing. It transforms pre-writing materials (ideas, experimental logs and supplied figures) into draft LaTeX manuscripts, including literature synthesis.
+
+Its agents handle outline generation, literature review, section writing and content refinement. The upstream architecture diagram below also shows plotting, which is disabled in this fork.
 
 <div align="center">
   <img src="assets/overview.png" alt="PaperOrchestra Overview" width="90%"/>
@@ -13,37 +25,16 @@ Acting like an orchestrated team of specialized agents, it handles outline gener
 
 ## Key Features
 
-- **Multi-Agent Pipeline**: Orchestrates specialized agents (Outline, Literature Review, Section Writing, Content Refinement, Plotting) for end-to-end paper generation.
+- **Multi-Agent Pipeline**: Orchestrates agents for outline generation, literature review, section writing and content refinement.
 - **Comprehensive Literature Synthesis**: Automatically searches, prioritizes, and integrates relevant literature into the manuscript.
-- **Visuals Generation**: Generates plots and supports the inclusion of conceptual diagrams.
-- **LaTeX Automation**: Produces submission-ready LaTeX manuscripts adhering to target conference templates.
+- **Figures**: Uses supplied figures. Automatic figure generation is disabled in this fork.
+- **LaTeX Automation**: Produces draft LaTeX manuscripts adhering to target conference templates.
 
 ## Installation
 
-1.  **Environment Setup**: The project relies on a Conda environment named `paper_orchestra`. You can set up a similar environment with Python 3.11 and install the required dependencies.
-    ```bash
-    conda create -n paper_orchestra python=3.11
-    conda activate paper_orchestra
-    pip install -r requirements.txt
-    ```
-
-2.  **Environment Variables**: Create a `.env` file in the root of the project and add your API keys:
-    ```env
-    # Add keys if you have them, otherwise leave them empty
-    # You need to specify related keys if you want to use the model
-    # For example, if you want to use Gemini models, you need to specify either VERTEX_AI_PROJECT and VERTEX_AI_LOCATION, or GEMINI_API_KEY
-    # If you want to use OpenAI models, you need to specify OPENAI_API_KEY
-    
-    SEMANTIC_SCHOLAR_API_KEY=your_semantic_scholar_api_key
-    OPENAI_API_KEY=your_openai_api_key
-    VERTEX_AI_PROJECT=your_vertex_ai_project
-    VERTEX_AI_LOCATION=your_vertex_ai_location
-    GEMINI_API_KEY=your_gemini_api_key
-
-    # if you want to run demo and send emails to yourself at the end, set these 2 fields as well
-    SMTP_EMAIL=your_email
-    SMTP_PASSWORD=your_password
-    ```
+1. **Environment**: Use Python 3.14 in a virtual environment and install `requirements-lock.txt`. It pins the versions used for validation.
+2. **Models**: Copy `.env.example` to `.env` and `model-policy.example.json` to `model-policy.json`. Set selected model credentials, capabilities, token limits, current prices and an authorised spending ceiling. See [RELIABILITY.md](RELIABILITY.md).
+3. **Compilation**: Run Docker and build the local TeX image with `docker build -f docker/tex.Dockerfile -t paper-orchestra-tex:local .`. The application compiles in an isolated container; it does not compile generated TeX directly on the host.
 
 ## Dataset
 
@@ -65,16 +56,22 @@ python paper_writing_cli.py \
   --raw_materials_dir /path_to_your_raw_materials/ \
   --latex_template_dir /path_to_your_latex_template/ \
   --output_dir /path_to_your_output_folder/ \
-  --use_plotting true
+  --writer_model_name openai:YOUR_MODEL_ID
 ```
 
 ### Key Arguments
 *   `--raw_materials_dir`: (Required) Directory containing the raw materials (e.g., idea and experimental log).
 *   `--latex_template_dir`: (Required) Directory containing the LaTeX template (e.g., `templates/cvpr2025`).
 *   `--output_dir`: Directory to output the generated paper. If not specified, an automatic folder with a timestamp is created.
-*   `--use_plotting`: Enable the plotting agent workflow to generate figures from code (Default: `False`).
+*   `--use_plotting`: Retained for compatibility. `true` is rejected; supply checked figures instead.
 *   `--writer_model_name`: LLM for writer and literature agents.
-*   `--reflection_model_name`: LLM for reflection agents.
+*   `--reflection_model_name`: Model for review and refinement; defaults to the writer.
+*   `--search_model_name`: Model for ranking retrieved records; defaults to the writer.
+
+* `--literature_sources`: Comma-separated source names. Defaults to PubMed, OpenAlex, Semantic Scholar and Crossref.
+* `--resume_run`: Resume a saved run after checking unchanged inputs and completed output hashes.
+
+Outputs are saved under `output_dir/runs/<run-id>`. The general medical template is `templates/medical`; outputs include an editable Word draft and an evidence-review table.
 
 ### Interactive Demo
 
@@ -103,3 +100,10 @@ If you find this repo or our paper helpful, please cite it as follows:
 # Disclaimer
 
 This is not an officially supported Google product.
+# Research review additions
+
+See [RESEARCH_REVIEW.md](RESEARCH_REVIEW.md) for the offline quality benchmark,
+aggregate numerical checks, evidence review, controlled revisions, paginated
+discovery, optional read-only web/Zotero/MCP adapters, PMC passages and publication
+status checks. The chat-assisted exchange can review a manuscript without model
+API calls. Keep private research inputs outside this public checkout.

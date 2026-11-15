@@ -13,3 +13,11 @@ rich
 streamlit
 thefuzz
 tqdm
+anthropic
+requests
+joblib
+python-docx>=1.2.0
+pypandoc-binary
+numpy
+Pillow
+lxml

@@ -26,6 +26,7 @@ import pymupdf  # type: ignore
 import numpy as np
 import cv2
 from pypdf import PdfReader  # type: ignore
+from utils.draft_output import mark_pdf_as_draft
 
 
 def load_paper(pdf_path, num_pages=None, min_size=100):
@@ -166,88 +167,9 @@ def get_paper_references_from_pdf(
     return None
 
 
-def compile_latex(cwd, pdf_file, texfile_name="template", timeout=30):
-    import os, shutil, subprocess, traceback, rich
-
-    source_pdf = os.path.join(cwd, f"{texfile_name}.pdf")
-    if os.path.exists(source_pdf):
-        os.remove(source_pdf)
-
-    env = dict(os.environ)
-    for var in ["TEXINPUTS", "TEXMFHOME", "TEXMF", "TEXMFVAR", "TEXMFCONFIG"]:
-        env.pop(var, None)
-
-    commands = [
-        ["pdflatex", "-interaction=nonstopmode", f"{texfile_name}.tex"],
-        ["bibtex", texfile_name],
-        ["pdflatex", "-interaction=nonstopmode", f"{texfile_name}.tex"],
-        ["pdflatex", "-interaction=nonstopmode", f"{texfile_name}.tex"],
-    ]
-
-    execution_logs = []
-
-    for command in commands:
-        cmd_str = " ".join(command)
-        try:
-            result = subprocess.run(
-                command,
-                cwd=cwd,
-                capture_output=True,  # Captures stdout/stderr silently
-                text=True,
-                timeout=timeout,
-                env=env,
-            )
-
-            execution_logs.append(
-                {
-                    "cmd": cmd_str,
-                    "returncode": result.returncode,
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                }
-            )
-
-        except subprocess.TimeoutExpired:
-            execution_logs.append(
-                {"cmd": cmd_str, "error": f"TIMEOUT after {timeout}s"}
-            )
-        except Exception as e:
-            execution_logs.append({"cmd": cmd_str, "error": str(e)})
-
-    has_timeout = any(
-        "error" in log and "TIMEOUT" in log["error"] for log in execution_logs
-    )
-
-    if os.path.exists(source_pdf) and not has_timeout:
-        try:
-            shutil.move(source_pdf, pdf_file)
-        except Exception:
-            rich.print(f"[bold red]Error moving generated PDF to {pdf_file}[/bold red]")
-            print(traceback.format_exc())
-    else:
-        rich.print(
-            f"\n[bold red]❌ PDF Generation Failed (No PDF file produced)[/bold red]"
-        )
-
-        for log in execution_logs:
-            if "error" in log:
-                header_color = "red"
-            elif log["returncode"] == 0:
-                header_color = "green"
-            else:
-                header_color = "yellow"  # Warning/Error
-
-            rich.print(
-                f"\n[bold {header_color}]---> Ran: {log['cmd']}[/bold {header_color}]"
-            )
-
-            if "error" in log:
-                rich.print(f"[bold red]SYSTEM ERROR: {log['error']}[/bold red]")
-            else:
-                if log["stdout"].strip():
-                    rich.print(f"[dim]{log['stdout'].strip()}[/dim]")
-                if log["stderr"].strip():
-                    rich.print(f"[red]{log['stderr'].strip()}[/red]")
+def compile_latex(cwd, pdf_file, texfile_name="template", timeout=60):
+    from utils.safe_compile import compile_latex as isolated_compile
+    return isolated_compile(cwd, pdf_file, texfile_name, timeout)
 
 
 def pdf_to_grid_images(pdf_path, output_dir, scale=2.0):

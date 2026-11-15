@@ -1,0 +1,29 @@
+[
+  {
+    "id": "denominator-and-invented-result",
+    "denominator": 80,
+    "required_evidence": ["trial"],
+    "expected_claims": ["response"],
+    "references": {"trial": {"status": "unknown", "passage": "Twenty of 80 synthetic participants met the response definition."}},
+    "flawed": {"text": "Response occurred in 20 (40%).", "retrieved_evidence": [], "claims": [{"id": "response", "references": ["trial"]}, {"id": "cure", "references": ["invented"]}]},
+    "corrected": {"text": "Response occurred in 20 (25%).", "retrieved_evidence": ["trial"], "claims": [{"id": "response", "references": ["trial"]}]}
+  },
+  {
+    "id": "misleading-retracted-evidence",
+    "denominator": 200,
+    "required_evidence": ["replication"],
+    "expected_claims": ["association"],
+    "references": {"old": {"status": "retracted", "passage": "Synthetic misleading source."}, "replication": {"status": "unknown", "passage": "Ten of 200 synthetic observations had the finding; causation was not tested."}},
+    "flawed": {"text": "The finding occurred in 10 (5%).", "retrieved_evidence": ["old"], "claims": [{"id": "causation", "references": ["old"]}]},
+    "corrected": {"text": "The finding occurred in 10 (5%).", "retrieved_evidence": ["replication"], "claims": [{"id": "association", "references": ["replication"]}]}
+  },
+  {
+    "id": "metadata-without-evidence",
+    "denominator": 50,
+    "required_evidence": ["full"],
+    "expected_claims": ["finding"],
+    "references": {"snippet": {"status": "unknown"}, "full": {"status": "unknown", "passage": "Five of 50 synthetic samples were positive."}},
+    "flawed": {"text": "Positive samples: 5 (12%).", "retrieved_evidence": ["snippet"], "claims": [{"id": "finding", "references": ["snippet"]}]},
+    "corrected": {"text": "Positive samples: 5 (10%).", "retrieved_evidence": ["full"], "claims": [{"id": "finding", "references": ["full"]}]}
+  }
+]

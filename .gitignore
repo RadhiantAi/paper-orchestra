@@ -5,3 +5,9 @@
 datasets/*
 paper_output*
 *.zip
+.venv/
+.pytest_cache/
+__pycache__/
+model-policy.json
+connectors.json
+private/
