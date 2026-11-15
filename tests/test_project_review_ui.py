@@ -367,3 +367,15 @@ def test_ui_maps_claim_and_records_baseline_provenance(tmp_path):
         load_project(evidence)["issued_versions"][0]["provenance"]["kind"]
         == "reconstructed"
     )
+
+
+def test_new_controls_are_available_in_review_interface(tmp_path):
+    from streamlit.testing.v1 import AppTest
+    create_project(tmp_path)
+    app = AppTest.from_string("from frontend.project_review import render_project\nrender_project(" + repr(str(tmp_path)) + ")").run(timeout=20)
+    assert not app.exception
+    assert any(x.label == "Inspect workbook structure" for x in app.button)
+    next(x for x in app.selectbox if x.label == "Analysis recipe").select("continuous_measurements").run(timeout=20)
+    assert not app.exception
+    assert any(x.label == "How groups were defined" for x in app.text_input)
+    assert any(x.label == "Minimum discussion words" for x in app.number_input)

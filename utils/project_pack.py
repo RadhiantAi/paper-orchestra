@@ -171,31 +171,8 @@ def referenced_word_images(path):
     This establishes a content reference, not correct placement or rendered fidelity.
     Privacy checks deliberately still inspect every media part, including orphans.
     """
-    from docx.oxml.ns import qn
-
-    doc = Document(path)
-    parts = [doc.part]
-    for node in doc._element.xpath(".//w:headerReference | .//w:footerReference"):
-        part = doc.part.related_parts.get(node.get(qn("r:id")))
-        if part is not None:
-            parts.append(part)
-    seen = set()
-    for part in parts:
-        for node in part.element.iter():
-            if node.tag == qn("a:blip"):
-                rid = node.get(qn("r:embed"))
-            elif node.tag == "{urn:schemas-microsoft-com:vml}imagedata":
-                rid = node.get(qn("r:id"))
-            else:
-                continue
-            if any(ancestor.tag == qn("w:del") for ancestor in node.iterancestors()):
-                continue
-            image = part.related_parts.get(rid)
-            if image is not None and image.content_type.startswith("image/"):
-                key = str(image.partname)
-                if key not in seen:
-                    seen.add(key)
-                    yield image.blob
+    from utils.figure_presence import image_occurrences
+    yield from (blob for blob, _ in image_occurrences(path))
 
 
 def doc_text(path):
@@ -523,6 +500,11 @@ def check_pack(workspace, directory):
                         )
                         break
     manuscript = text_by_role.get("manuscript", "")
+    from utils.manuscript_completeness import audit_completeness
+    from utils.source_structure import allocation_findings
+    completeness = audit_completeness(manuscript, spec.get("manuscript_expectations"))
+    pending.extend(completeness["findings"])
+    pending.extend(allocation_findings(data))
     from utils.manuscript_consistency import audit_consistency
 
     consistency = audit_consistency(data, manuscript)
@@ -566,10 +548,7 @@ def check_pack(workspace, directory):
                         if "/media/" in n:
                             asset_hashes.add(hashlib.sha256(z.read(n)).hexdigest())
                             pixel_hashes.add(image_pixel_hash(z.read(n)))
-                            if f.suffix.lower() == ".pptx":
-                                present_hashes.add(hashlib.sha256(z.read(n)).hexdigest())
-                                present_pixels.add(image_pixel_hash(z.read(n)))
-                if f.suffix.lower() == ".docx":
+                if f.suffix.lower() in {".docx", ".pptx"}:
                     for blob in referenced_word_images(f):
                         present_hashes.add(hashlib.sha256(blob).hexdigest())
                         present_pixels.add(image_pixel_hash(blob))
@@ -642,6 +621,10 @@ def check_pack(workspace, directory):
                     problems.append(
                         {"kind": "unmasked_original_in_pack", "id": fig["id"]}
                     )
+    from utils.figure_presence import check_placements
+    placements = check_placements(directory, data["figures"], spec.get("figure_placements", []))
+    problems.extend(placements["problems"])
+    pending.extend(placements["pending"])
     figure_docs = [
         p
         for p in directory.glob("*")
@@ -778,6 +761,8 @@ def check_pack(workspace, directory):
         "numeric_status": audit["status"],
         "consistency": consistency,
         "coverage": coverage,
+        "completeness": completeness,
+        "figure_placements": placements,
         "journal": journal_report,
     }
 

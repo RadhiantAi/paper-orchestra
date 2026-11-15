@@ -1,0 +1,14 @@
+{
+  "name": "continuous_measurements",
+  "sampling_unit": "One independent synthetic unit",
+  "independent_units_confirmed": true,
+  "units": {"x": "mm", "y": "mm"},
+  "groups": {"A": "Synthetic group A", "B": "Synthetic group B"},
+  "group_definition": "Synthetic assigned group codes",
+  "missingness_reason": "Synthetic blanks; explain actual study missingness before use",
+  "predictors": ["x"],
+  "outcomes": ["y"],
+  "confidence": 0.95,
+  "seed": 1729,
+  "bootstrap_iterations": 2000
+}

@@ -16,6 +16,10 @@ current chat's retrieved evidence without making model API calls.
 native Excel extraction, claims linked to results, caption-label comparisons and
 explicit document history. These checks also work entirely offline.
 
+[Offline trial review](docs/blinded-trial-checks.md) adds structural source
+allocation, continuous-measurement analysis, per-document panel locations and
+explicit manuscript completeness expectations.
+
 [REVIEW_WORKBENCH.md](REVIEW_WORKBENCH.md) covers the complete local review screen,
 OCR, reproducible aggregate analyses and journal checks. Networking is **offline by
 default**. An authorised live run must explicitly set `PAPER_NETWORK_MODE=online`;
