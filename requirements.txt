@@ -21,3 +21,4 @@ pypandoc-binary
 numpy
 Pillow
 lxml
+cryptography>=50.0.2

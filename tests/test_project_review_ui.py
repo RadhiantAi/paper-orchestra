@@ -224,3 +224,66 @@ def test_file_picker_and_recovery_export_in_interface(tmp_path):
     )
     assert not app.exception and not app.error
     assert inspect_backup(tmp_path / "project-recovery.zip")["complete"]
+
+
+def test_interface_encrypted_backup_and_readonly_retention(tmp_path):
+    from utils.project_recovery import inspect_backup
+
+    w = tmp_path / "project"
+    create_project(w)
+    app = AppTest.from_string(
+        "from frontend.project_review import render_project\nrender_project("
+        + repr(str(w))
+        + ")"
+    ).run(timeout=15)
+    next(
+        x for x in app.checkbox if x.label == "Encrypt the recovery export"
+    ).check().run(timeout=15)
+    for label in ["Export passphrase", "Repeat export passphrase"]:
+        next(x for x in app.text_input if x.label == label).set_value(
+            "Synthetic UI passphrase 123!"
+        )
+    next(x for x in app.button if x.label == "Create checked recovery ZIP").click().run(
+        timeout=20
+    )
+    assert not app.exception and not app.error
+    assert inspect_backup(
+        tmp_path / "project-recovery.porx", "Synthetic UI passphrase 123!"
+    )["complete"]
+    before = (w / "project.json").read_bytes()
+    next(
+        x for x in app.button if x.label == "Preview storage and retention"
+    ).click().run(timeout=15)
+    assert not app.exception and not app.error
+    assert (w / "project.json").read_bytes() == before
+
+
+def test_interface_records_later_round_supersession(tmp_path):
+    from test_review_rounds import rounds
+    from utils.coauthor_review import coauthor_findings
+
+    w, first, second, r1, r2, i1, i2, final = rounds(tmp_path)
+    app = AppTest.from_string(
+        "from frontend.project_review import render_project\nrender_project("
+        + repr(str(w))
+        + ")"
+    ).run(timeout=15)
+    next(x for x in app.selectbox if x.label == "Issued version").select(
+        second["id"]
+    ).run(timeout=15)
+    next(
+        x for x in app.text_input if x.label == "Checked manuscript for supersession"
+    ).set_value(str(final))
+    next(x for x in app.text_input if x.label == "Supersession reviewer").set_value(
+        "Reviewer"
+    )
+    next(
+        x
+        for x in app.text_area
+        if x.label == "Why this later decision replaces the earlier item"
+    ).set_value("Compared both rounds and the final wording")
+    next(
+        x for x in app.button if x.label == "Record explicit supersession"
+    ).click().run(timeout=15)
+    assert not app.exception and not app.error
+    assert not coauthor_findings(load_project(w), "Later revision.")
