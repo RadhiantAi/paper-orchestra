@@ -123,6 +123,8 @@ def register_issued(
 
 
 def import_return(workspace, issued_id, returned, owner):
+    from utils.version_provenance import provenance_status
+
     if not owner.strip():
         raise ValueError("Assign the returned review to a named owner.")
     data = load_project(workspace)
@@ -177,7 +179,7 @@ def import_return(workspace, issued_id, returned, owner):
         "owner": owner,
         "base_verified": base_verified,
         "base_text_matches": base_verified,
-        "baseline_provenance": issued.get("provenance", {}).get("kind", "unknown"),
+        "baseline_provenance": provenance_status(issued),
         "author_approval": False,
         "tracked_edits": edits,
         "items": items,

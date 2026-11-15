@@ -53,6 +53,18 @@ def provenance_status(record):
     provenance = record.get("provenance", {})
     if not provenance:
         return "unknown"
+    kind = provenance.get("kind", "unknown")
+    if kind not in KINDS or (
+        kind != "unknown"
+        and not all(provenance.get(k, "").strip() for k in ("reviewer", "reason"))
+    ):
+        return "unknown"
+    if kind in {
+        "confirmed_issued",
+        "reconstructed",
+        "published",
+    } and not provenance.get("evidence"):
+        return "unknown"
     if (
         (
             provenance.get("source_sha256")
@@ -64,7 +76,7 @@ def provenance_status(record):
         return "stale_source"
     if provenance.get("evidence") and not current_file(provenance["evidence"]):
         return "stale_evidence"
-    return provenance.get("kind", "unknown")
+    return kind
 
 
 def set_source_provenance(

@@ -152,3 +152,33 @@ def test_altered_provenance_evidence_blocks_dependency_check(tmp_path):
     assert not dependency_status(data)
     Path(data["sources"][0]["provenance"]["evidence"]["path"]).write_text("changed")
     assert dependency_status(data)[0]["status"] == "version_evidence_changed_or_missing"
+
+
+def test_host_cannot_assert_issued_copy_provenance(tmp_path):
+    from utils.project_review import import_host
+
+    create_project(tmp_path)
+    source = {
+        "id": "s",
+        "sha256": "a" * 64,
+        "origin": "fixture",
+        "status": "read",
+        "blocks": [{"locator": "p1", "text": "Synthetic source."}],
+    }
+    payload = {
+        "schema": 1,
+        "mode": "host_assisted",
+        "host": "Synthetic",
+        "sources": [source],
+    }
+    import_host(tmp_path, payload)
+    assert provenance_status(load_project(tmp_path)["sources"][0]) == "unknown"
+    source["provenance"] = {
+        "kind": "confirmed_issued",
+        "reviewer": "Invented",
+        "reason": "Model assertion",
+    }
+    with pytest.raises(ValueError, match="explicit review"):
+        import_host(tmp_path, payload)
+    assert provenance_status(load_project(tmp_path)["sources"][0]) == "unknown"
+    assert provenance_status({"provenance": {"kind": "confirmed_issued"}}) == "unknown"

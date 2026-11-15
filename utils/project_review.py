@@ -254,6 +254,8 @@ def import_host(workspace, payload):
         unique(payload.get("sources", []))
         for r in payload.get("sources", []):
             require_text(r, "id", "sha256", "origin", "status")
+            if "provenance" in r or "provenance_history" in r:
+                raise ValueError("Version history uses the explicit review operation.")
             if not re.fullmatch(r"[a-f0-9]{64}", r["sha256"]):
                 raise ValueError("Source content hash required.")
             if r["status"] not in {"read", "partial", "unreadable", "excluded"}:
