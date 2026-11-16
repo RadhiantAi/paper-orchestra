@@ -251,6 +251,8 @@ def import_host(workspace, payload):
 
     def apply(data):
         draft = deepcopy(data)
+        if data.get("trial_protocol") and payload.get("calculations"):
+            raise ValueError("Frozen trials use their prespecified local recipes. External calculation receipts require a separate exploratory project.")
         from utils.strict_trial import admit_host
         admit_host(data, payload)
         unique(payload.get("sources", []))

@@ -381,6 +381,7 @@ def render_project(workspace):
         mappings = []
         from frontend.trial_controls import continuous_mapping_controls
         continuous_mappings = continuous_mapping_controls(data)
+        continuous_figures = st.multiselect("Calculation-linked figures for this pack", [r["id"] for r in data.get("continuous_figures", [])])
         for r in data["results"]:
             template = st.text_input(
                 "Exact sentence or table text for " + r["id"],
@@ -417,6 +418,7 @@ def render_project(workspace):
                     spec["manuscript_expectations"] = expectations
                 spec["figure_placements"] = placements
                 spec["continuous_mappings"] = continuous_mappings
+                spec["continuous_figures"] = continuous_figures
                 return prepare_pack(workspace, spec, out, office or None)
 
             report = action(

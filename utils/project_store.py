@@ -1,6 +1,7 @@
 """Private, versioned project records for host-assisted manuscript work."""
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 from utils.research_quality import fingerprint
@@ -47,14 +48,23 @@ def load_project(path):
     return data
 
 
-def update_project(path, transform):
+def update_project(path, transform, *, trial_operation=None):
     path = private_path(path)
     with review_lock(path):
         data = load_project(path)
+        if data.get("trial_freeze") and trial_operation not in {"unblind", "compare"}:
+            raise ValueError("Candidate frozen: only explicit unblinding and comparison may update this trial. Start a new project for revisions.")
         from utils.project_recovery import snapshot
 
         snapshot(path, data)
+        frozen_before = deepcopy(data) if data.get("trial_freeze") else None
         transform(data)
+        if frozen_before is not None:
+            allowed = {"trial_unblinding", "strict_trial"} if trial_operation == "unblind" else {"trial_comparisons"}
+            if {k: v for k, v in data.items() if k not in allowed} != {k: v for k, v in frozen_before.items() if k not in allowed}:
+                raise ValueError("Frozen trial evidence and decisions cannot be revised.")
+            if trial_operation == "unblind" and {k: v for k, v in data["strict_trial"].items() if k != "unblinded_at"} != {k: v for k, v in frozen_before["strict_trial"].items() if k != "unblinded_at"}:
+                raise ValueError("Unblinding cannot change strict trial controls.")
         snapshot(path, data)
         write_json(path / "project.json", data)
     return data
